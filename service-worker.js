@@ -4,7 +4,7 @@
 // (aucune étape ne dépend du réseau). Le nom du cache est versionné : le
 // changer force la mise à jour au prochain déploiement.
 
-const CACHE_VERSION = "fit-analyzer-v1";
+const CACHE_VERSION = "fit-analyzer-v2";
 
 const ASSETS = [
   "./",
@@ -12,8 +12,10 @@ const ASSETS = [
   "./manifest.json",
   "./config.local.js",
   "./css/style.css",
+  "./css/leaflet.css",
   "./js/app.bundle.js",
   "./js/fit-file-parser.bundle.js",
+  "./js/leaflet.bundle.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-192-maskable.png",

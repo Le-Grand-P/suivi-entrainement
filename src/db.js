@@ -62,12 +62,14 @@ function wrapRequest(req) {
  * Enregistre une sortie. `fitBlob` est le fichier .fit original (Blob),
  * conservé pour pouvoir rouvrir le tracé complet plus tard (édition de
  * montée, comparaison) sans redemander le fichier à l'utilisateur.
+ * `flatSegment` (nullable) : voir flatSegment.js — segment plat de référence
+ * de la sortie, absent si aucun tronçon plat suffisamment long n'a été trouvé.
  */
-export async function insertRide({ filename, rideDate, importedAt, stats, climbs, fitBlob }) {
+export async function insertRide({ filename, rideDate, importedAt, stats, climbs, flatSegment, fitBlob }) {
   const store = await tx(STORE_RIDES, "readwrite");
   const record = {
     filename, ride_date: rideDate, imported_at: importedAt,
-    stats, climbs, fit_blob: fitBlob,
+    stats, climbs, flat_segment: flatSegment ?? null, fit_blob: fitBlob,
   };
   const id = await wrapRequest(store.add(record));
   return id;
@@ -89,8 +91,31 @@ export async function getRide(id) {
   if (!r) return null;
   return {
     id: r.id, filename: r.filename, ride_date: r.ride_date, imported_at: r.imported_at,
-    stats: r.stats, climbs: r.climbs, hasFitBlob: !!r.fit_blob,
+    stats: r.stats, climbs: r.climbs,
+    flatSegment: r.flat_segment ?? null,
+    // Distingue "analysé, aucun plat assez long trouvé" (flat_segment absent
+    // MAIS la clé existe, valant null) de "jamais analysé pour cette
+    // fonction" (sortie importée avant son ajout, clé absente) — sans ça
+    // l'interface afficherait à tort "pas de plat" sur une sortie qui n'a
+    // simplement jamais été vérifiée.
+    flatSegmentComputed: "flat_segment" in r,
+    hasFitBlob: !!r.fit_blob,
   };
+}
+
+/**
+ * Segments plats de toutes les sorties qui en ont un (pour la comparaison
+ * inter-sorties). Les sorties importées avant l'ajout de cette fonction
+ * n'ont pas de flat_segment stocké — simplement absentes de la liste, comme
+ * pour les montées sans coordonnées GPS.
+ */
+export async function allFlatSegmentsWithRideDate() {
+  const store = await tx(STORE_RIDES, "readonly");
+  const all = await wrapRequest(store.getAll());
+  return all
+    .filter((r) => r.flat_segment)
+    .map((r) => ({ ...r.flat_segment, ride_id: r.id, ride_date: r.ride_date, ride_filename: r.filename }))
+    .sort((a, b) => (a.ride_date || "").localeCompare(b.ride_date || ""));
 }
 
 /** Récupère le Blob .fit original d'une sortie (pour re-parser côté client). */

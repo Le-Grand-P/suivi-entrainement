@@ -35,6 +35,13 @@ const FALLBACK_DEFAULTS = {
   MOVING_MAX_GAP_S: 30,
   MOVING_MIN_SPEED_KMH: 3.0,
 
+  // --- Détection du segment plat de référence (indicateur de forme) ---
+  FLAT_MAX_GRADE_PCT: 1.5,   // pente lissée tolérée, en valeur absolue (±)
+  FLAT_MIN_DURATION_S: 300,  // 5 min minimum pour qualifier
+  FLAT_MAX_DURATION_S: 1200, // 20 min plafond : au-delà, le calcul se limite aux 20 premières minutes
+  FLAT_MAX_SPEED_CV: 0.15,   // régularité de vitesse exigée (écart-type/moyenne) — écarte les
+                             // portions "plates" mais hachées (feux rouges, trafic urbain)
+
   // --- Charge d'entraînement (CTL/ATL/TSB, méthode Coggan) ---
   CTL_TIME_CONSTANT: 42,   // jours — "fitness" longue durée
   ATL_TIME_CONSTANT: 7,    // jours — "fatigue" court terme

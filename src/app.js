@@ -4,6 +4,7 @@ import * as api from "./localApi.js";
 import { ElevationProfile } from "./profile.js";
 import { renderProgressionChart, renderHrVamChart, renderCompareChart,
          renderPmcChart, renderVolumeBarChart } from "./charts.js";
+import { renderRouteMap, destroyRouteMap } from "./mapView.js";
 import { registerServiceWorker, setupInstallPrompt } from "./pwa.js";
 
 /* ------------------------------------------------------------------ Outils */
@@ -63,6 +64,7 @@ async function call(method, ...args) {
 /* ------------------------------------------------------------- Navigation */
 
 let activeProfile = null;
+let activeMap = null;
 
 function showTab(name) {
   document.querySelectorAll(".tab-btn")
@@ -73,6 +75,7 @@ function showTab(name) {
   window.scrollTo(0, 0);
 
   if (name !== "detail" && activeProfile) { activeProfile.destroy(); activeProfile = null; }
+  if (name !== "detail" && activeMap) { destroyRouteMap(activeMap); activeMap = null; }
   if (name === "rides") loadRides();
   if (name === "progression") loadProgression();
   if (name === "compare") loadCompare();
@@ -185,13 +188,15 @@ async function openRide(id) {
   const out = document.getElementById("detail-out");
   out.innerHTML = spinner();
   try {
-    const [ride, series] = await Promise.all([
+    const [ride, series, profile] = await Promise.all([
       call("get_ride_detail", id),
       call("get_ride_series", id).catch(() => null),
+      call("get_profile").catch(() => ({ flat_max_grade_pct: null })),
     ]);
     if (!ride) { out.innerHTML = notice("Sortie introuvable."); return; }
     currentRide = ride;
     currentSeries = series;
+    const FLAT_MAX_GRADE = profile.flat_max_grade_pct;
 
     const s = ride.stats;
     let html = `<p class="eyebrow">${frDate(ride.ride_date)}</p>
@@ -218,6 +223,38 @@ async function openRide(id) {
       html += `<h2>Profil de la sortie</h2>
         <div class="card"><div id="ride-profile" class="profile-wrap"></div>
         <div class="readout" id="ride-readout"></div></div>`;
+    }
+
+    if (series && series.lat) {
+      html += `<h2>Tracé</h2>
+        <p class="lede">Nécessite une connexion Internet (fond de carte OpenStreetMap) — le reste de l'appli continue de fonctionner hors ligne.</p>
+        <div class="card"><div id="ride-map"></div></div>`;
+    }
+
+    html += `<h2>Segment plat de référence</h2>
+      <p class="lede">
+        Portion plate d'au moins 5 min repérée automatiquement (pente ≤ ${nf(FLAT_MAX_GRADE, 1)} %,
+        plafonnée à 20 min) — vitesse et FC comparables d'une sortie à l'autre à effort similaire.
+      </p>`;
+    if (ride.flatSegment) {
+      const fs = ride.flatSegment;
+      html += `<div class="metrics">
+        ${metric("Vitesse moy.", num(fs.avg_speed_kmh, "km/h", 1))}
+        ${metric("FC moyenne", num(fs.avg_hr, "bpm"))}
+        ${metric("Durée", dur(fs.duration_s))}
+        ${metric("Longueur", num(fs.distance_m / 1000, "km", 1))}
+        ${metric("Intervient au km", num(fs.start_km, "km", 1))}
+        ${metric("D+ déjà grimpé", num(fs.elevation_gain_before_m, "m"))}
+      </div>`;
+      if (fs.truncated) {
+        html += `<p class="muted" style="margin-top:8px">Ce tronçon plat continuait au-delà de 20 min — le calcul s'arrête là pour rester comparable aux autres sorties.</p>`;
+      }
+    } else if (ride.flatSegmentComputed) {
+      html += `<div class="empty"><div class="big">Pas de plat assez long sur cette sortie</div>
+        <p>Il faut au moins 5 minutes continues sous ${nf(FLAT_MAX_GRADE, 1)} % de pente.</p></div>`;
+    } else {
+      html += `<div class="empty"><div class="big">Pas encore analysé</div>
+        <p>Cette sortie a été importée avant l'ajout de cette fonction — réimporte-la pour vérifier si elle contient un segment plat.</p></div>`;
     }
 
     if (s.hr_zones_pct) {
@@ -250,6 +287,7 @@ async function openRide(id) {
     out.innerHTML = html;
 
     if (series && series.alt) renderRideProfile(series, ride.climbs);
+    if (series && series.lat) renderRideMap(series, ride.climbs);
     if (ride.climbs && ride.climbs.length > 1) {
       renderHrVamChart(document.getElementById("hr-vam-chart"), ride.climbs);
     }
@@ -306,6 +344,20 @@ function renderRideProfile(series, climbs) {
         (series.grade[i] !== null ? `<span>pente <b>${nf(series.grade[i], 1)} %</b></span>` : "");
     },
   });
+}
+
+function renderRideMap(series, climbs) {
+  const host = document.getElementById("ride-map");
+  if (!host) return;
+  if (activeMap) { destroyRouteMap(activeMap); activeMap = null; }
+  const tickClimbs = (series.climbs || []).map((sc) => ({
+    start_idx: sc.start_idx, end_idx: sc.end_idx,
+  }));
+  try {
+    activeMap = renderRouteMap(host, series, tickClimbs);
+  } catch (e) {
+    host.innerHTML = notice("Carte indisponible : " + e.message);
+  }
 }
 
 /* --------------------------------------------- Éditeur de bornes de montée */
@@ -497,6 +549,7 @@ async function loadProgression() {
   loadGoals();
   loadTrainingLoad();
   loadDashboard();
+  loadFlatSegments();
   loadClimbSegments();
 }
 
@@ -657,6 +710,49 @@ async function dashboardChart(period) {
 }
 
 /* ------------------------------------------------------------- Montées répétées */
+
+async function loadFlatSegments() {
+  const chart = document.getElementById("flat-chart");
+  const table = document.getElementById("flat-table");
+  chart.innerHTML = spinner();
+  table.innerHTML = "";
+  try {
+    const data = await call("get_flat_segments");
+    const segs = data.segments || [];
+    if (!segs.length) {
+      chart.innerHTML = `<div class="empty"><div class="big">Pas encore de segment plat</div>
+        <p>Il faut au moins une sortie avec 5 min continues de plat.</p></div>`;
+      return;
+    }
+    if (segs.length >= 2) {
+      const dates = segs.map((s) => new Date(s.ride_date).getTime());
+      const speeds = segs.map((s) => s.avg_speed_kmh);
+      renderProgressionChart(chart, dates, speeds, {
+        ylabel: "Vitesse (km/h)", title: "Vitesse sur le segment plat de référence",
+      });
+    } else {
+      chart.innerHTML = `<p class="muted">Une seule sortie avec segment plat pour l'instant —
+        le graphique apparaîtra à partir de la deuxième.</p>`;
+    }
+
+    table.innerHTML = `<div class="card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr>
+        <th>Date</th><th>Sortie</th><th>Vitesse</th><th>FC</th><th>Durée</th><th>Longueur</th>
+        <th>Km sortie</th><th>D+ avant</th>
+      </tr></thead><tbody>` + segs.slice().reverse().map((s) => `<tr>
+        <td class="date-cell">${frDate(s.ride_date)}</td>
+        <td class="fname">${esc(s.ride_filename)}</td>
+        <td class="num"><b>${nf(s.avg_speed_kmh, 1)}</b> km/h</td>
+        <td class="num">${nf(s.avg_hr)} bpm</td>
+        <td class="num">${dur(s.duration_s).replace(/<\/?small>/g, "")}${s.truncated ? " ⚠" : ""}</td>
+        <td class="num">${nf(s.distance_m / 1000, 1)} km</td>
+        <td class="num">${nf(s.start_km, 1)} km</td>
+        <td class="num">${nf(s.elevation_gain_before_m)} m</td>
+      </tr>`).join("") + `</tbody></table></div></div>`;
+  } catch (e) {
+    chart.innerHTML = notice(e.message);
+  }
+}
+
 
 async function loadClimbSegments() {
   const out = document.getElementById("segments-out");

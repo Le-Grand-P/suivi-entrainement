@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG } from "./config.js";
 import { computeRideTSS, computePMC } from "./trainingLoad.js";
 import { aggregateByPeriod } from "./aggregate.js";
 import { buildClimbSegments, applyStoredNames } from "./climbSegments.js";
+import { detectFlatSegment } from "./flatSegment.js";
 
 const PROGRESSION_METRICS = {
   avg_power_est_w: "Puissance estimée moyenne (W)",
@@ -73,7 +74,8 @@ export async function import_files(fileList) {
     const filename = file.name;
     try {
       const dfRaw = await parseFitFile(file, filename);
-      const { globalStats, climbs } = analyzeRide(dfRaw, cfg);
+      const { globalStats, climbs, df } = analyzeRide(dfRaw, cfg);
+      const flatSegment = detectFlatSegment(df, cfg);
 
       const rideDate = new Date(dfRaw.timestamp[0]).toISOString().slice(0, 10);
 
@@ -85,7 +87,7 @@ export async function import_files(fileList) {
 
       const id = await db.insertRide({
         filename, rideDate, importedAt: new Date().toISOString(),
-        stats: globalStats, climbs, fitBlob: file,
+        stats: globalStats, climbs, flatSegment, fitBlob: file,
       });
       results.push({ filename, status: "ok", ride_id: id, ride_date: rideDate, n_climbs: climbs.length });
     } catch (e) {
@@ -168,6 +170,8 @@ export async function get_ride_series(id, maxPoints = 1600) {
     hr: series(df.heart_rate, 0),
     speed: series(df.speed_kmh, 1),
     grade: series(df.grade_pct, 1),
+    lat: series(df.lat, 5),
+    lon: series(df.lon, 5),
     elapsed_s: idx.map((i) => Math.round((df.timestamp[i] - baseT) / 1000)),
     climbs: climbsOut,
   };
@@ -318,6 +322,7 @@ export async function get_profile() {
     lthr: cfg.LTHR_CYCLING,
     current_ftp_w: cfg.CURRENT_FTP_W,
     target_ftp_w: cfg.TARGET_FTP_W,
+    flat_max_grade_pct: cfg.FLAT_MAX_GRADE_PCT,
   };
 }
 
@@ -415,6 +420,14 @@ export async function rename_climb_segment(anchor, name, existingNameId) {
     name: trimmed,
   });
   return { status: "ok", name_id: id };
+}
+
+/* ------------------------------------------------------------------ */
+/* Segment plat de référence (indicateur de forme)                     */
+/* ------------------------------------------------------------------ */
+
+export async function get_flat_segments() {
+  return { segments: await db.allFlatSegmentsWithRideDate() };
 }
 
 /* ------------------------------------------------------------------ */

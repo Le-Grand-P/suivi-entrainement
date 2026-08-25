@@ -143,6 +143,28 @@ cardiaque/puissance par montée, **éditeur de montée interactif** (glisse les
 bornes au doigt directement sur le profil), suivi de progression, et
 comparaison de sorties.
 
+**Carte du tracé** (nouveau, seule partie qui a besoin d'Internet) — le tracé
+GPS de la sortie s'affiche sur un fond OpenStreetMap, montées surlignées en
+rouge, repères départ (A, vert) / arrivée (B, sombre). Les images de carte
+(tuiles) sont chargées à la demande et jamais mises en cache : sans
+connexion, la carte affiche un fond gris uni plutôt que de planter — tout le
+reste de l'appli continue de fonctionner hors ligne normalement.
+
+**Segment plat de référence** — repère automatiquement, sur chaque sortie,
+la portion plate (pente ≤ 1,5 % par défaut) la plus longue d'au moins
+5 minutes, plafonnée à 20 min pour rester comparable d'une sortie à
+l'autre. **Écarte les portions plates mais irrégulières** (trafic urbain,
+feux rouges) via un contrôle de régularité de vitesse (coefficient de
+variation ≤ 15 % par défaut) — sans ça, un tronçon en ville hacherait la
+vitesse moyenne tout en ayant une pente nulle, et fausserait la
+comparaison. Affiche vitesse moyenne, FC moyenne, durée, longueur, le
+kilomètre de la sortie où ça intervient et le D+ déjà grimpé à ce
+moment-là — un indicateur de forme à effort comparable, indépendant du
+relief et du trafic du jour. Comparaison inter-sorties dans l'onglet
+**Progression** (tableau + graphique de tendance de vitesse). Absent si
+aucune sortie ne comporte 5 minutes continues de plat suffisamment
+régulier.
+
 Le moteur de calcul est un **port fidèle** du code Python desktop — validé
 en comparant les résultats des deux versions sur un vrai fichier `.fit` :
 correspondance exacte sur toutes les métriques (distance, D+, puissance

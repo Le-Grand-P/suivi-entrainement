@@ -509,6 +509,23 @@ input[type="text"]:focus-visible, input[type="date"]:focus-visible, input[type="
 
 img.chart { max-width: 100%; display: block; border-radius: 2px; }
 
+/* ---------------------------------------------------------------- Carte du tracé */
+
+.route-map {
+  height: 320px; width: 100%; border-radius: 2px;
+  background: var(--paper-sunk); /* visible pendant le chargement des tuiles */
+}
+/* Leaflet pose ses propres z-index/position ; on ne touche qu'à l'habillage. */
+.route-map .leaflet-control-attribution {
+  background: rgba(244,244,239,.85); font-family: var(--font-body); font-size: 10px;
+}
+.route-marker span {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  color: #f4f4ef; font-family: var(--font-sign); font-size: 11px; font-weight: 700;
+  border: 2px solid #f4f4ef; box-shadow: 0 1px 3px rgba(0,0,0,.35);
+}
+
 /* ---------------------------------------------------------- Mini-graphiques SVG */
 /* Remplacent les images matplotlib de la version desktop : rendu vectoriel
    natif, net sur les écrans haute densité des téléphones. */

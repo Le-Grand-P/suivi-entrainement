@@ -42,7 +42,7 @@ window.FIT_ANALYZER_CONFIG = {
   CLIMB_MIN_GRADE_PCT: 3.0,        // pente moyenne lissée minimale pour qualifier un tronçon de "montée", %
   CLIMB_MIN_DISTANCE_M: 400,       // distance minimale du tronçon, m
   CLIMB_MIN_ELEVATION_M: 25,       // dénivelé minimal du tronçon, m
-  CLIMB_MERGE_GAP_M: 400,          // deux montées séparées de moins de X m (replat/faux plat) sont fusionnées
+  CLIMB_MERGE_GAP_M: 150,          // deux montées séparées de moins de X m (replat/faux plat) sont fusionnées
   ALTITUDE_SMOOTHING_WINDOW: 13,   // nb de points de la moyenne glissante sur l'altitude
   GRADE_WINDOW_M: 50,              // fenêtre de distance (m) pour calculer la pente (évite le bruit du baromètre)
   ELEVATION_THRESHOLD_M: 1.5,      // hystérésis du cumul de D+/D- : une variation doit dépasser ce seuil pour compter
@@ -52,6 +52,17 @@ window.FIT_ANALYZER_CONFIG = {
   // ------------------------------------------------------------------------
   MOVING_MAX_GAP_S: 30,            // dt max (s) entre 2 points pour rester considéré comme "temps mobile"
   MOVING_MIN_SPEED_KMH: 3.0,       // vitesse min (km/h) pour compter comme "en mouvement"
+
+  // ------------------------------------------------------------------------
+  // SEGMENT PLAT DE RÉFÉRENCE (indicateur de forme)
+  // Repère automatiquement ~5 min de plat par sortie pour comparer ta vitesse
+  // à FC comparable dans le temps.
+  // ------------------------------------------------------------------------
+  FLAT_MAX_GRADE_PCT: 1.5,         // pente tolérée pour "plat", en valeur absolue (%)
+  FLAT_MIN_DURATION_S: 300,        // durée minimale pour qualifier, secondes (5 min)
+  FLAT_MAX_DURATION_S: 1200,       // plafond, secondes (20 min) — au-delà, calcul tronqué aux 20 premières minutes
+  FLAT_MAX_SPEED_CV: 0.15,         // régularité de vitesse exigée (écart-type/moyenne, 0.15 = 15%)
+                                    // — écarte les portions "plates" mais hachées (feux rouges, trafic urbain)
 
   // ------------------------------------------------------------------------
   // CHARGE D'ENTRAÎNEMENT (CTL/ATL/TSB, méthode Coggan)

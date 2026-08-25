@@ -17,6 +17,7 @@
     get_climb_segments: () => get_climb_segments,
     get_compare_metrics: () => get_compare_metrics,
     get_dashboard: () => get_dashboard,
+    get_flat_segments: () => get_flat_segments,
     get_profile: () => get_profile,
     get_progression: () => get_progression,
     get_progression_metrics: () => get_progression_metrics,
@@ -76,7 +77,7 @@
       req.onerror = () => reject(req.error);
     });
   }
-  async function insertRide({ filename, rideDate, importedAt, stats, climbs, fitBlob }) {
+  async function insertRide({ filename, rideDate, importedAt, stats, climbs, flatSegment, fitBlob }) {
     const store = await tx(STORE_RIDES, "readwrite");
     const record = {
       filename,
@@ -84,6 +85,7 @@
       imported_at: importedAt,
       stats,
       climbs,
+      flat_segment: flatSegment ?? null,
       fit_blob: fitBlob
     };
     const id = await wrapRequest(store.add(record));
@@ -112,8 +114,20 @@
       imported_at: r.imported_at,
       stats: r.stats,
       climbs: r.climbs,
+      flatSegment: r.flat_segment ?? null,
+      // Distingue "analysé, aucun plat assez long trouvé" (flat_segment absent
+      // MAIS la clé existe, valant null) de "jamais analysé pour cette
+      // fonction" (sortie importée avant son ajout, clé absente) — sans ça
+      // l'interface afficherait à tort "pas de plat" sur une sortie qui n'a
+      // simplement jamais été vérifiée.
+      flatSegmentComputed: "flat_segment" in r,
       hasFitBlob: !!r.fit_blob
     };
+  }
+  async function allFlatSegmentsWithRideDate() {
+    const store = await tx(STORE_RIDES, "readonly");
+    const all = await wrapRequest(store.getAll());
+    return all.filter((r) => r.flat_segment).map((r) => ({ ...r.flat_segment, ride_id: r.id, ride_date: r.ride_date, ride_filename: r.filename })).sort((a, b) => (a.ride_date || "").localeCompare(b.ride_date || ""));
   }
   async function getRideFitBlob(id) {
     const store = await tx(STORE_RIDES, "readonly");
@@ -552,6 +566,48 @@
     }
     return [gain, loss];
   }
+  function cumulativeElevationGainSeries(altArr, thresholdM) {
+    const n = altArr.length;
+    const out = new Float64Array(n);
+    let gain = 0;
+    let anchor = null;
+    let direction = 0;
+    let lastFinite = 0;
+    for (let i = 0; i < n; i++) {
+      const v = altArr[i];
+      if (!Number.isFinite(v)) {
+        out[i] = lastFinite;
+        continue;
+      }
+      if (anchor === null) {
+        anchor = v;
+        out[i] = 0;
+        lastFinite = 0;
+        continue;
+      }
+      const delta = v - anchor;
+      if (direction >= 0 && delta >= thresholdM) {
+        gain += delta;
+        anchor = v;
+        direction = 1;
+      } else if (direction <= 0 && delta <= -thresholdM) {
+        anchor = v;
+        direction = -1;
+      } else if (direction === 1 && delta < -thresholdM) {
+        anchor = v;
+        direction = -1;
+      } else if (direction === -1 && delta > thresholdM) {
+        anchor = v;
+        direction = 1;
+      } else if (direction === 1 && v > anchor || direction === -1 && v < anchor) {
+        if (direction === 1) gain += v - anchor;
+        anchor = v;
+      }
+      out[i] = gain;
+      lastFinite = gain;
+    }
+    return out;
+  }
   function round(value, digits = 0) {
     if (value === null || value === void 0 || !Number.isFinite(value)) return null;
     const f = Math.pow(10, digits);
@@ -890,6 +946,16 @@
     // --- Filtrage temps mobile ---
     MOVING_MAX_GAP_S: 30,
     MOVING_MIN_SPEED_KMH: 3,
+    // --- Détection du segment plat de référence (indicateur de forme) ---
+    FLAT_MAX_GRADE_PCT: 1.5,
+    // pente lissée tolérée, en valeur absolue (±)
+    FLAT_MIN_DURATION_S: 300,
+    // 5 min minimum pour qualifier
+    FLAT_MAX_DURATION_S: 1200,
+    // 20 min plafond : au-delà, le calcul se limite aux 20 premières minutes
+    FLAT_MAX_SPEED_CV: 0.15,
+    // régularité de vitesse exigée (écart-type/moyenne) — écarte les
+    // portions "plates" mais hachées (feux rouges, trafic urbain)
     // --- Charge d'entraînement (CTL/ATL/TSB, méthode Coggan) ---
     CTL_TIME_CONSTANT: 42,
     // jours — "fitness" longue durée
@@ -1146,6 +1212,101 @@
     return Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
   }
 
+  // src/flatSegment.js
+  function detectFlatSegment(df, cfg) {
+    const n = df.n;
+    const isFlat = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const g = df.grade_pct[i];
+      isFlat[i] = df.is_moving[i] && Number.isFinite(g) && Math.abs(g) <= cfg.FLAT_MAX_GRADE_PCT ? 1 : 0;
+    }
+    const segments = contiguousSegments2(isFlat);
+    const candidates = segments.map(([s, e]) => {
+      let durS = 0;
+      for (let i = s; i <= e; i++) durS += df.moving_dt_s[i];
+      return { start: s, end: e, durationS: durS };
+    }).filter((c) => c.durationS >= cfg.FLAT_MIN_DURATION_S).map((c) => {
+      const capped = truncatedWindow(df, c.start, c.end, cfg.FLAT_MAX_DURATION_S);
+      return { ...c, cappedEnd: capped.end, speedCv: speedCoefficientOfVariation(df, c.start, capped.end) };
+    });
+    const regular = candidates.filter((c) => c.speedCv !== null && c.speedCv <= cfg.FLAT_MAX_SPEED_CV);
+    if (!regular.length) return null;
+    let best = regular[0];
+    for (const c of regular) {
+      if (c.durationS > best.durationS) best = c;
+    }
+    return computeFlatSegmentMetrics(df, best.start, best.end, cfg);
+  }
+  function speedCoefficientOfVariation(df, start, end) {
+    const speeds = [];
+    for (let i = start; i <= end; i++) {
+      if (Number.isFinite(df.speed_kmh[i])) speeds.push(df.speed_kmh[i]);
+    }
+    if (speeds.length < 10) return null;
+    const mean3 = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    if (mean3 <= 0) return null;
+    const variance = speeds.reduce((a, v) => a + (v - mean3) ** 2, 0) / speeds.length;
+    return Math.sqrt(variance) / mean3;
+  }
+  function truncatedWindow(df, start, end, maxDurationS) {
+    let cappedEnd = start;
+    let durS = 0;
+    for (let i = start; i <= end; i++) {
+      durS += df.moving_dt_s[i];
+      cappedEnd = i;
+      if (durS >= maxDurationS) break;
+    }
+    return { end: cappedEnd, durationS: durS };
+  }
+  function computeFlatSegmentMetrics(df, start, end, cfg) {
+    const { end: cappedEnd, durationS: durS } = truncatedWindow(df, start, end, cfg.FLAT_MAX_DURATION_S);
+    const distanceM = df.distance[cappedEnd] - df.distance[start];
+    const startKm = (df.distance[start] - df.distance[0]) / 1e3;
+    let hrSum = 0, hrCount = 0;
+    for (let i = start; i <= cappedEnd; i++) {
+      if (Number.isFinite(df.heart_rate[i])) {
+        hrSum += df.heart_rate[i];
+        hrCount++;
+      }
+    }
+    const avgHr = hrCount > 0 ? hrSum / hrCount : NaN;
+    const avgSpeedKmh = durS > 0 ? distanceM / 1e3 / (durS / 3600) : NaN;
+    const cumulGain = cumulativeElevationGainSeries(df.alt_smooth, cfg.ELEVATION_THRESHOLD_M);
+    const elevationGainBeforeM = cumulGain[start];
+    const truncated = cappedEnd < end;
+    return {
+      start_idx: start,
+      end_idx: cappedEnd,
+      start_time: new Date(df.timestamp[start]).toISOString(),
+      end_time: new Date(df.timestamp[cappedEnd]).toISOString(),
+      duration_s: round2(durS),
+      distance_m: round2(distanceM),
+      avg_speed_kmh: round2(avgSpeedKmh, 1),
+      avg_hr: round2(avgHr),
+      start_km: round2(startKm, 1),
+      elevation_gain_before_m: round2(elevationGainBeforeM),
+      truncated
+    };
+  }
+  function contiguousSegments2(mask) {
+    const segments = [];
+    let start = null;
+    for (let i = 0; i < mask.length; i++) {
+      if (mask[i] && start === null) start = i;
+      else if (!mask[i] && start !== null) {
+        segments.push([start, i - 1]);
+        start = null;
+      }
+    }
+    if (start !== null) segments.push([start, mask.length - 1]);
+    return segments;
+  }
+  function round2(v, digits = 0) {
+    if (!Number.isFinite(v)) return null;
+    const f = Math.pow(10, digits);
+    return Math.round(v * f) / f;
+  }
+
   // src/localApi.js
   var PROGRESSION_METRICS = {
     avg_power_est_w: "Puissance estim\xE9e moyenne (W)",
@@ -1193,7 +1354,8 @@
       const filename = file.name;
       try {
         const dfRaw = await parseFitFile(file, filename);
-        const { globalStats, climbs } = analyzeRide(dfRaw, cfg);
+        const { globalStats, climbs, df } = analyzeRide(dfRaw, cfg);
+        const flatSegment = detectFlatSegment(df, cfg);
         const rideDate = new Date(dfRaw.timestamp[0]).toISOString().slice(0, 10);
         const dup = await rideExists(filename, rideDate, globalStats.distance_km);
         if (dup) {
@@ -1206,6 +1368,7 @@
           importedAt: (/* @__PURE__ */ new Date()).toISOString(),
           stats: globalStats,
           climbs,
+          flatSegment,
           fitBlob: file
         });
         results.push({ filename, status: "ok", ride_id: id, ride_date: rideDate, n_climbs: climbs.length });
@@ -1250,7 +1413,7 @@
     const baseT = df.timestamp[0];
     const series = (arr, digits) => idx.map((i) => {
       const v = arr[i];
-      return Number.isFinite(v) ? round2(v, digits) : null;
+      return Number.isFinite(v) ? round3(v, digits) : null;
     });
     const climbsOut = (ride.climbs || []).map((c, i) => {
       let s = indexForTime(df, c.start_time);
@@ -1264,11 +1427,13 @@
     return {
       n_points: n,
       idx,
-      dist_km: idx.map((i) => round2((df.distance[i] - baseDist) / 1e3, 4)),
+      dist_km: idx.map((i) => round3((df.distance[i] - baseDist) / 1e3, 4)),
       alt: series(df.alt_smooth, 1),
       hr: series(df.heart_rate, 0),
       speed: series(df.speed_kmh, 1),
       grade: series(df.grade_pct, 1),
+      lat: series(df.lat, 5),
+      lon: series(df.lon, 5),
       elapsed_s: idx.map((i) => Math.round((df.timestamp[i] - baseT) / 1e3)),
       climbs: climbsOut
     };
@@ -1395,7 +1560,8 @@
       fc_repos: cfg.FC_REPOS,
       lthr: cfg.LTHR_CYCLING,
       current_ftp_w: cfg.CURRENT_FTP_W,
-      target_ftp_w: cfg.TARGET_FTP_W
+      target_ftp_w: cfg.TARGET_FTP_W,
+      flat_max_grade_pct: cfg.FLAT_MAX_GRADE_PCT
     };
   }
   async function save_profile(partialCfg) {
@@ -1461,6 +1627,9 @@
     });
     return { status: "ok", name_id: id };
   }
+  async function get_flat_segments() {
+    return { segments: await allFlatSegmentsWithRideDate() };
+  }
   async function list_goals() {
     const goals = await listGoals();
     const rides = await listRides();
@@ -1478,7 +1647,7 @@
         target_distance_km: g.target_distance_km ?? null,
         target_elevation_m: g.target_elevation_m ?? null,
         days_remaining: daysRemaining,
-        longest_ride_km: round2(longestRideKm, 1),
+        longest_ride_km: round3(longestRideKm, 1),
         biggest_elevation_m: Math.round(biggestElevationM)
       };
     });
@@ -1497,7 +1666,7 @@
     await deleteGoal(id);
     return { status: "ok" };
   }
-  function round2(v, digits = 0) {
+  function round3(v, digits = 0) {
     if (!Number.isFinite(v)) return null;
     const f = Math.pow(10, digits);
     return Math.round(v * f) / f;
@@ -2314,6 +2483,73 @@
     host.appendChild(svg);
   }
 
+  // src/mapView.js
+  var _leafletCssInjected = false;
+  function ensureLeafletCss() {
+    if (_leafletCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "css/leaflet.css";
+    document.head.appendChild(link);
+    _leafletCssInjected = true;
+  }
+  function renderRouteMap(container, series, climbs = []) {
+    ensureLeafletCss();
+    const pts = [];
+    for (let i = 0; i < series.lat.length; i++) {
+      if (Number.isFinite(series.lat[i]) && Number.isFinite(series.lon[i])) {
+        pts.push([series.lat[i], series.lon[i], i]);
+      }
+    }
+    if (pts.length < 2) {
+      container.innerHTML = `<p class="muted">Pas de coordonn\xE9es GPS exploitables pour cette sortie.</p>`;
+      return null;
+    }
+    container.innerHTML = "";
+    const mapDiv = document.createElement("div");
+    mapDiv.className = "route-map";
+    container.appendChild(mapDiv);
+    const map = window.L.map(mapDiv, { scrollWheelZoom: false });
+    window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '\xA9 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+      maxZoom: 18
+    }).addTo(map);
+    const latLngs = pts.map(([lat, lon]) => [lat, lon]);
+    const route = window.L.polyline(latLngs, {
+      color: "#3a5a46",
+      weight: 3.5,
+      opacity: 0.9,
+      lineJoin: "round"
+    }).addTo(map);
+    for (const c of climbs) {
+      const segPts = pts.filter(([, , i]) => i >= c.start_idx && i <= c.end_idx).map(([lat, lon]) => [lat, lon]);
+      if (segPts.length >= 2) {
+        window.L.polyline(segPts, { color: "#c2452d", weight: 4.5, opacity: 0.85 }).addTo(map);
+      }
+    }
+    addMarker(map, latLngs[0], "A", "#3a5a46");
+    addMarker(map, latLngs[latLngs.length - 1], "B", "#24231f");
+    map.fitBounds(route.getBounds(), { padding: [24, 24] });
+    const resize = () => map.invalidateSize();
+    window.addEventListener("resize", resize);
+    map._faResizeHandler = resize;
+    return map;
+  }
+  function destroyRouteMap(map) {
+    if (!map) return;
+    if (map._faResizeHandler) window.removeEventListener("resize", map._faResizeHandler);
+    map.remove();
+  }
+  function addMarker(map, latLng, label, color) {
+    const icon = window.L.divIcon({
+      className: "route-marker",
+      html: `<span style="background:${color}">${label}</span>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+    window.L.marker(latLng, { icon }).addTo(map);
+  }
+
   // src/pwa.js
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
@@ -2390,6 +2626,7 @@
     return r;
   }
   var activeProfile = null;
+  var activeMap = null;
   function showTab(name) {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tab-content").forEach((s) => s.classList.remove("active"));
@@ -2399,6 +2636,10 @@
     if (name !== "detail" && activeProfile) {
       activeProfile.destroy();
       activeProfile = null;
+    }
+    if (name !== "detail" && activeMap) {
+      destroyRouteMap(activeMap);
+      activeMap = null;
     }
     if (name === "rides") loadRides();
     if (name === "progression") loadProgression();
@@ -2497,9 +2738,10 @@
     const out = document.getElementById("detail-out");
     out.innerHTML = spinner();
     try {
-      const [ride, series] = await Promise.all([
+      const [ride, series, profile] = await Promise.all([
         call("get_ride_detail", id),
-        call("get_ride_series", id).catch(() => null)
+        call("get_ride_series", id).catch(() => null),
+        call("get_profile").catch(() => ({ flat_max_grade_pct: null }))
       ]);
       if (!ride) {
         out.innerHTML = notice("Sortie introuvable.");
@@ -2507,6 +2749,7 @@
       }
       currentRide = ride;
       currentSeries = series;
+      const FLAT_MAX_GRADE = profile.flat_max_grade_pct;
       const s = ride.stats;
       let html = `<p class="eyebrow">${frDate(ride.ride_date)}</p>
       <h1>${esc(ride.filename)}</h1>`;
@@ -2530,6 +2773,36 @@
         html += `<h2>Profil de la sortie</h2>
         <div class="card"><div id="ride-profile" class="profile-wrap"></div>
         <div class="readout" id="ride-readout"></div></div>`;
+      }
+      if (series && series.lat) {
+        html += `<h2>Trac\xE9</h2>
+        <p class="lede">N\xE9cessite une connexion Internet (fond de carte OpenStreetMap) \u2014 le reste de l'appli continue de fonctionner hors ligne.</p>
+        <div class="card"><div id="ride-map"></div></div>`;
+      }
+      html += `<h2>Segment plat de r\xE9f\xE9rence</h2>
+      <p class="lede">
+        Portion plate d'au moins 5 min rep\xE9r\xE9e automatiquement (pente \u2264 ${nf(FLAT_MAX_GRADE, 1)} %,
+        plafonn\xE9e \xE0 20 min) \u2014 vitesse et FC comparables d'une sortie \xE0 l'autre \xE0 effort similaire.
+      </p>`;
+      if (ride.flatSegment) {
+        const fs = ride.flatSegment;
+        html += `<div class="metrics">
+        ${metric("Vitesse moy.", num(fs.avg_speed_kmh, "km/h", 1))}
+        ${metric("FC moyenne", num(fs.avg_hr, "bpm"))}
+        ${metric("Dur\xE9e", dur(fs.duration_s))}
+        ${metric("Longueur", num(fs.distance_m / 1e3, "km", 1))}
+        ${metric("Intervient au km", num(fs.start_km, "km", 1))}
+        ${metric("D+ d\xE9j\xE0 grimp\xE9", num(fs.elevation_gain_before_m, "m"))}
+      </div>`;
+        if (fs.truncated) {
+          html += `<p class="muted" style="margin-top:8px">Ce tron\xE7on plat continuait au-del\xE0 de 20 min \u2014 le calcul s'arr\xEAte l\xE0 pour rester comparable aux autres sorties.</p>`;
+        }
+      } else if (ride.flatSegmentComputed) {
+        html += `<div class="empty"><div class="big">Pas de plat assez long sur cette sortie</div>
+        <p>Il faut au moins 5 minutes continues sous ${nf(FLAT_MAX_GRADE, 1)} % de pente.</p></div>`;
+      } else {
+        html += `<div class="empty"><div class="big">Pas encore analys\xE9</div>
+        <p>Cette sortie a \xE9t\xE9 import\xE9e avant l'ajout de cette fonction \u2014 r\xE9importe-la pour v\xE9rifier si elle contient un segment plat.</p></div>`;
       }
       if (s.hr_zones_pct) {
         html += `<h2>Temps par zone cardiaque</h2><div class="card zones">` + Object.entries(s.hr_zones_pct).map(([z, p], i) => `
@@ -2557,6 +2830,7 @@
       }
       out.innerHTML = html;
       if (series && series.alt) renderRideProfile(series, ride.climbs);
+      if (series && series.lat) renderRideMap(series, ride.climbs);
       if (ride.climbs && ride.climbs.length > 1) {
         renderHrVamChart(document.getElementById("hr-vam-chart"), ride.climbs);
       }
@@ -2611,6 +2885,23 @@
         readout.innerHTML = `<span>km <b>${nf(series.dist_km[i], 1)}</b></span><span>alt <b>${nf(series.alt[i])} m</b></span>` + (series.hr[i] !== null ? `<span>FC <b>${nf(series.hr[i])} bpm</b></span>` : "") + (series.grade[i] !== null ? `<span>pente <b>${nf(series.grade[i], 1)} %</b></span>` : "");
       }
     });
+  }
+  function renderRideMap(series, climbs) {
+    const host = document.getElementById("ride-map");
+    if (!host) return;
+    if (activeMap) {
+      destroyRouteMap(activeMap);
+      activeMap = null;
+    }
+    const tickClimbs = (series.climbs || []).map((sc) => ({
+      start_idx: sc.start_idx,
+      end_idx: sc.end_idx
+    }));
+    try {
+      activeMap = renderRouteMap(host, series, tickClimbs);
+    } catch (e) {
+      host.innerHTML = notice("Carte indisponible : " + e.message);
+    }
   }
   var climbEditors = {};
   async function toggleClimb(i) {
@@ -2782,6 +3073,7 @@
     loadGoals();
     loadTrainingLoad();
     loadDashboard();
+    loadFlatSegments();
     loadClimbSegments();
   }
   async function loadGoals() {
@@ -2933,6 +3225,47 @@
         <td class="num">${nf(b.elevationM)} m</td>
         <td class="num">${dur(b.movingTimeS).replace(/<\/?small>/g, "")}</td>
         <td class="num">${nf(b.tss)}${b.tssUnreliable ? " \u26A0" : ""}</td>
+      </tr>`).join("") + `</tbody></table></div></div>`;
+    } catch (e) {
+      chart.innerHTML = notice(e.message);
+    }
+  }
+  async function loadFlatSegments() {
+    const chart = document.getElementById("flat-chart");
+    const table = document.getElementById("flat-table");
+    chart.innerHTML = spinner();
+    table.innerHTML = "";
+    try {
+      const data = await call("get_flat_segments");
+      const segs = data.segments || [];
+      if (!segs.length) {
+        chart.innerHTML = `<div class="empty"><div class="big">Pas encore de segment plat</div>
+        <p>Il faut au moins une sortie avec 5 min continues de plat.</p></div>`;
+        return;
+      }
+      if (segs.length >= 2) {
+        const dates = segs.map((s) => new Date(s.ride_date).getTime());
+        const speeds = segs.map((s) => s.avg_speed_kmh);
+        renderProgressionChart(chart, dates, speeds, {
+          ylabel: "Vitesse (km/h)",
+          title: "Vitesse sur le segment plat de r\xE9f\xE9rence"
+        });
+      } else {
+        chart.innerHTML = `<p class="muted">Une seule sortie avec segment plat pour l'instant \u2014
+        le graphique appara\xEEtra \xE0 partir de la deuxi\xE8me.</p>`;
+      }
+      table.innerHTML = `<div class="card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr>
+        <th>Date</th><th>Sortie</th><th>Vitesse</th><th>FC</th><th>Dur\xE9e</th><th>Longueur</th>
+        <th>Km sortie</th><th>D+ avant</th>
+      </tr></thead><tbody>` + segs.slice().reverse().map((s) => `<tr>
+        <td class="date-cell">${frDate(s.ride_date)}</td>
+        <td class="fname">${esc(s.ride_filename)}</td>
+        <td class="num"><b>${nf(s.avg_speed_kmh, 1)}</b> km/h</td>
+        <td class="num">${nf(s.avg_hr)} bpm</td>
+        <td class="num">${dur(s.duration_s).replace(/<\/?small>/g, "")}${s.truncated ? " \u26A0" : ""}</td>
+        <td class="num">${nf(s.distance_m / 1e3, 1)} km</td>
+        <td class="num">${nf(s.start_km, 1)} km</td>
+        <td class="num">${nf(s.elevation_gain_before_m)} m</td>
       </tr>`).join("") + `</tbody></table></div></div>`;
     } catch (e) {
       chart.innerHTML = notice(e.message);

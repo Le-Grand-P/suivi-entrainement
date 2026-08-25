@@ -146,6 +146,48 @@ export function accumulateElevation(altArr, thresholdM) {
   return [gain, loss];
 }
 
+/**
+ * Version "série" de accumulateElevation : renvoie le D+ CUMULÉ à chaque
+ * indice (même longueur que altArr, indices alignés — contrairement à
+ * accumulateElevation qui travaille sur les seules valeurs finies). Sert à
+ * savoir "combien de D+ déjà grimpé à ce point de la sortie" (voir
+ * flatSegment.js). Même state-machine à hystérésis, donc mêmes garanties de
+ * robustesse au bruit barométrique — la valeur au DERNIER indice doit
+ * toujours correspondre exactement au gain total renvoyé par
+ * accumulateElevation sur le même tableau (vérifié par test).
+ */
+export function cumulativeElevationGainSeries(altArr, thresholdM) {
+  const n = altArr.length;
+  const out = new Float64Array(n);
+  let gain = 0;
+  let anchor = null;
+  let direction = 0;
+  let lastFinite = 0;
+
+  for (let i = 0; i < n; i++) {
+    const v = altArr[i];
+    if (!Number.isFinite(v)) { out[i] = lastFinite; continue; }
+    if (anchor === null) { anchor = v; out[i] = 0; lastFinite = 0; continue; }
+
+    const delta = v - anchor;
+    if (direction >= 0 && delta >= thresholdM) {
+      gain += delta; anchor = v; direction = 1;
+    } else if (direction <= 0 && delta <= -thresholdM) {
+      anchor = v; direction = -1;
+    } else if (direction === 1 && delta < -thresholdM) {
+      anchor = v; direction = -1;
+    } else if (direction === -1 && delta > thresholdM) {
+      anchor = v; direction = 1;
+    } else if ((direction === 1 && v > anchor) || (direction === -1 && v < anchor)) {
+      if (direction === 1) gain += v - anchor;
+      anchor = v;
+    }
+    out[i] = gain;
+    lastFinite = gain;
+  }
+  return out;
+}
+
 /* ---------------------------------------------------------------------- */
 /* Stats globales                                                          */
 /* ---------------------------------------------------------------------- */
