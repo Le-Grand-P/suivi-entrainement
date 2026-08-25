@@ -42,7 +42,7 @@ window.FIT_ANALYZER_CONFIG = {
   CLIMB_MIN_GRADE_PCT: 3.0,        // pente moyenne lissée minimale pour qualifier un tronçon de "montée", %
   CLIMB_MIN_DISTANCE_M: 400,       // distance minimale du tronçon, m
   CLIMB_MIN_ELEVATION_M: 25,       // dénivelé minimal du tronçon, m
-  CLIMB_MERGE_GAP_M: 400,          // deux montées séparées de moins de X m (replat/faux plat) sont fusionnées
+  CLIMB_MERGE_GAP_M: 150,          // deux montées séparées de moins de X m (replat/faux plat) sont fusionnées
   ALTITUDE_SMOOTHING_WINDOW: 13,   // nb de points de la moyenne glissante sur l'altitude
   GRADE_WINDOW_M: 50,              // fenêtre de distance (m) pour calculer la pente (évite le bruit du baromètre)
   ELEVATION_THRESHOLD_M: 1.5,      // hystérésis du cumul de D+/D- : une variation doit dépasser ce seuil pour compter

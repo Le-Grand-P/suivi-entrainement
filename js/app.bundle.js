@@ -1127,15 +1127,28 @@
     const sorted = [...withGps].sort((a, b) => (a.ride_date || "").localeCompare(b.ride_date || ""));
     const segments = [];
     for (const climb of sorted) {
-      const match = segments.find((seg) => isSameClimb(seg.anchor, climb));
+      const match = segments.find((seg) => isSameClimb(seg.centroid, climb));
       if (match) {
         match.occurrences.push(climb);
+        match.centroid = computeCentroidPoint(match.occurrences);
       } else {
-        segments.push({ anchor: climb, occurrences: [climb] });
+        const point = climbToPoint(climb);
+        segments.push({ centroid: point, occurrences: [climb] });
       }
     }
     const out = segments.filter((seg) => seg.occurrences.length >= 2).map((seg, i) => summarizeSegment(seg, i));
     return { segments: out, skippedNoGps };
+  }
+  function climbToPoint(c) {
+    return { start_lat: c.start_lat, start_lon: c.start_lon, distance_m: c.distance_m, elevation_gain_m: c.elevation_gain_m };
+  }
+  function computeCentroidPoint(occurrences) {
+    return {
+      start_lat: mean2(occurrences.map((c) => c.start_lat)),
+      start_lon: mean2(occurrences.map((c) => c.start_lon)),
+      distance_m: mean2(occurrences.map((c) => c.distance_m)),
+      elevation_gain_m: mean2(occurrences.map((c) => c.elevation_gain_m))
+    };
   }
   function isSameClimb(a, b) {
     const startDist = haversineDistanceM(a.start_lat, a.start_lon, b.start_lat, b.start_lon);
@@ -1184,10 +1197,12 @@
       vam_trend_pct: vamTrend,
       first_date: first.ride_date,
       last_date: last.ride_date,
-      // Point de référence du segment (ancre = première occurrence
-      // chronologique) : sert à retrouver/enregistrer un nom personnalisé.
-      anchor_lat: seg.anchor.start_lat,
-      anchor_lon: seg.anchor.start_lon,
+      // Point de référence du segment (centroïde de toutes les occurrences,
+      // pas seulement la première) : sert à retrouver/enregistrer un nom
+      // personnalisé, et reste stable même si de nouvelles occurrences
+      // s'ajoutent plus tard.
+      anchor_lat: seg.centroid.start_lat,
+      anchor_lon: seg.centroid.start_lon,
       occurrences: occ.map((c) => ({
         ride_id: c.ride_id,
         ride_date: c.ride_date,

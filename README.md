@@ -130,7 +130,12 @@ L'onglet **Progression** regroupe maintenant, du haut vers le bas :
   vide en renommant efface le nom personnalisé et revient au libellé
   automatique. **Les sorties importées avant l'ajout de cette fonction n'ont
   pas les coordonnées GPS nécessaires — réimporte-les pour qu'elles y
-  apparaissent.**
+  apparaissent.** La comparaison géographique se fait contre le **centroïde**
+  du segment (moyenne de toutes les occurrences déjà regroupées), pas contre
+  la première seule : ça évite qu'un léger écart GPS/mesure qui s'accumule
+  sortie après sortie fasse échouer le rattachement d'une 3ᵉ occurrence ou
+  plus (bug réel rencontré et corrigé — une montée ne pouvait auparavant pas
+  être reconnue au-delà de 2 fois dans certains cas).
 
 ---
 

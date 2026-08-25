@@ -8,6 +8,18 @@
 // dépendance à un service de cartographie — tout se fait localement à partir
 // des coordonnées déjà extraites du .fit.
 //
+// IMPORTANT : la comparaison se fait contre le CENTROÏDE du segment (moyenne
+// glissante de toutes les occurrences déjà regroupées), pas contre sa
+// première occurrence figée. Avec une ancre figée, un léger écart GPS/mesure
+// qui s'accumule sortie après sortie peut rester sous le seuil de tolérance
+// entre deux occurrences consécutives, mais dépasser ce même seuil comparé à
+// la toute première — la 3e occurrence (et suivantes) échouait alors à
+// rejoindre le segment silencieusement (bug réel constaté et corrigé). Le
+// centroïde, recalculé à chaque ajout, absorbe cette dérive au lieu de s'y
+// figer, tout en restant borné (contrairement à une comparaison uniquement
+// contre la dernière occurrence, qui laisserait le segment dériver sans
+// limite d'une occurrence à l'autre).
+//
 // Les segments sont recalculés à CHAQUE appel (rien n'est persisté) : ajouter
 // une sortie peut réordonner ou faire apparaître des segments. Le nom
 // personnalisé d'une montée (voir applyStoredNames) est donc rattaché à un
@@ -37,11 +49,13 @@ export function buildClimbSegments(climbs) {
   const segments = [];
 
   for (const climb of sorted) {
-    const match = segments.find((seg) => isSameClimb(seg.anchor, climb));
+    const match = segments.find((seg) => isSameClimb(seg.centroid, climb));
     if (match) {
       match.occurrences.push(climb);
+      match.centroid = computeCentroidPoint(match.occurrences);
     } else {
-      segments.push({ anchor: climb, occurrences: [climb] });
+      const point = climbToPoint(climb);
+      segments.push({ centroid: point, occurrences: [climb] });
     }
   }
 
@@ -50,6 +64,20 @@ export function buildClimbSegments(climbs) {
     .map((seg, i) => summarizeSegment(seg, i));
 
   return { segments: out, skippedNoGps };
+}
+
+function climbToPoint(c) {
+  return { start_lat: c.start_lat, start_lon: c.start_lon, distance_m: c.distance_m, elevation_gain_m: c.elevation_gain_m };
+}
+
+/** Moyenne des points de toutes les occurrences déjà regroupées dans le segment. */
+function computeCentroidPoint(occurrences) {
+  return {
+    start_lat: mean(occurrences.map((c) => c.start_lat)),
+    start_lon: mean(occurrences.map((c) => c.start_lon)),
+    distance_m: mean(occurrences.map((c) => c.distance_m)),
+    elevation_gain_m: mean(occurrences.map((c) => c.elevation_gain_m)),
+  };
 }
 
 /**
@@ -77,8 +105,8 @@ function ratio(a, b) {
 
 /**
  * Associe à chaque segment un nom personnalisé déjà enregistré, en comparant
- * le point de référence du segment (son ancre) aux entrées stockées avec la
- * MÊME logique de correspondance que le regroupement des montées. Ajoute
+ * le point de référence du segment (son centroïde) aux entrées stockées avec
+ * la MÊME logique de correspondance que le regroupement des montées. Ajoute
  * `name` (string ou null) et `name_id` (id de l'entrée stockée, pour permettre
  * un renommage ultérieur) à chaque segment.
  */
@@ -119,10 +147,12 @@ function summarizeSegment(seg, index) {
     vam_trend_pct: vamTrend,
     first_date: first.ride_date,
     last_date: last.ride_date,
-    // Point de référence du segment (ancre = première occurrence
-    // chronologique) : sert à retrouver/enregistrer un nom personnalisé.
-    anchor_lat: seg.anchor.start_lat,
-    anchor_lon: seg.anchor.start_lon,
+    // Point de référence du segment (centroïde de toutes les occurrences,
+    // pas seulement la première) : sert à retrouver/enregistrer un nom
+    // personnalisé, et reste stable même si de nouvelles occurrences
+    // s'ajoutent plus tard.
+    anchor_lat: seg.centroid.start_lat,
+    anchor_lon: seg.centroid.start_lon,
     occurrences: occ.map((c) => ({
       ride_id: c.ride_id,
       ride_date: c.ride_date,
