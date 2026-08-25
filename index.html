@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Analyseur FIT</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#24231f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Analyseur FIT">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">Analyseur<br>FIT</div>
+      <div class="brand-sub">Vélo · Montagne</div>
+    </div>
+    <nav class="rail-nav">
+      <button class="tab-btn active" data-tab="import">Importer</button>
+      <button class="tab-btn" data-tab="rides">Sorties</button>
+      <button class="tab-btn" data-tab="progression">Progression</button>
+      <button class="tab-btn" data-tab="compare">Comparer</button>
+    </nav>
+    <div class="rail-foot">Hors ligne</div>
+  </aside>
+
+  <main>
+
+    <div class="install-banner" id="install-banner">
+      <span>Installe l'appli sur ton écran d'accueil pour l'ouvrir en un tap.</span>
+      <button id="btn-install">Installer</button>
+    </div>
+
+    <section id="tab-import" class="tab-content active">
+      <p class="eyebrow">Étape 1</p>
+      <h1>Importer des sorties</h1>
+      <p class="lede">
+        Choisis un ou plusieurs fichiers <code>.fit</code>. Ils sont analysés et
+        conservés directement sur ton téléphone (aucun compte, aucun envoi sur
+        Internet) pour suivre ta progression au fil du temps.
+      </p>
+      <button id="btn-pick" class="btn btn-primary">Choisir des fichiers</button>
+      <input type="file" id="file-picker" accept=".fit,application/octet-stream" multiple>
+      <div id="import-out"></div>
+    </section>
+
+    <section id="tab-rides" class="tab-content">
+      <p class="eyebrow">Archives</p>
+      <h1>Mes sorties</h1>
+      <p class="lede">Ouvre une sortie pour voir son profil et ses montées.</p>
+      <div id="rides-out" class="card"></div>
+    </section>
+
+    <section id="tab-detail" class="tab-content">
+      <button id="btn-back" class="btn-quiet">← Toutes les sorties</button>
+      <div id="detail-out"></div>
+    </section>
+
+    <section id="tab-progression" class="tab-content">
+      <p class="eyebrow">Suivi</p>
+      <h1>Suivi & progression</h1>
+
+      <div id="goals-section">
+        <h2>Objectif</h2>
+        <div id="goals-out" class="card"></div>
+      </div>
+
+      <h2>Charge d'entraînement</h2>
+      <p class="lede">
+        CTL (forme longue durée) et ATL (fatigue court terme) sont calculés à
+        partir de la puissance <b>estimée</b> — pas d'un capteur réel. TSB
+        (fraîcheur) = CTL − ATL : négatif signifie que tu accumules de la
+        fatigue, positif que tu es reposé. Les barres orange dans le tableau
+        de bord signalent un TSS jugé peu fiable pour cette période (FTP
+        probablement décalé par rapport à l'effort réel — vérifie ton profil
+        dans <code>config.local.js</code> si ça se reproduit souvent).
+      </p>
+      <div id="pmc-summary" class="metrics"></div>
+      <div id="pmc-chart" class="card"></div>
+
+      <h2>Tableau de bord</h2>
+      <div class="row">
+        <label for="dashboard-period">Période</label>
+        <select id="dashboard-period">
+          <option value="week">Semaine par semaine</option>
+          <option value="month">Mois par mois</option>
+        </select>
+      </div>
+      <div id="dashboard-chart" class="card"></div>
+      <div id="dashboard-table"></div>
+
+      <h2>Progression d'une métrique</h2>
+      <p class="lede">
+        Chaque point est une sortie. La droite en pointillés donne la tendance
+        générale — elle ne corrige ni le terrain ni les conditions.
+      </p>
+      <div class="row">
+        <label for="metric-select">Métrique</label>
+        <select id="metric-select"></select>
+      </div>
+      <div id="prog-chart" class="card"></div>
+
+      <h2>Montées répétées</h2>
+      <p class="lede">
+        Montées reconnues comme "la même" sur plusieurs sorties (point de
+        départ proche + profil similaire), pour suivre ta progression dessus
+        précisément. Une sortie importée avant l'ajout de cette fonction doit
+        être réimportée pour y apparaître.
+      </p>
+      <div id="segments-out" class="card"></div>
+
+      <h2>Toutes les montées</h2>
+      <p class="lede">
+        À VAM égale, une fréquence cardiaque qui baisse au fil des semaines
+        traduit un gain d'efficience. Compare de préférence des montées de
+        pentes voisines.
+      </p>
+      <div id="climb-chart" class="card"></div>
+      <div id="climb-table"></div>
+    </section>
+
+    <section id="tab-compare" class="tab-content">
+      <p class="eyebrow">Côte à côte</p>
+      <h1>Comparer des sorties</h1>
+      <p class="lede">Superpose 2 à 5 sorties en fonction de la distance parcourue.</p>
+      <div id="compare-picker" class="card picker"></div>
+      <div class="row">
+        <label for="compare-metric">Comparer sur</label>
+        <select id="compare-metric"></select>
+        <button id="btn-compare" class="btn btn-primary">Comparer</button>
+      </div>
+      <div id="compare-out" class="card"></div>
+    </section>
+
+  </main>
+</div>
+
+<script src="config.local.js"></script>
+<script src="js/fit-file-parser.bundle.js"></script>
+<script src="js/app.bundle.js"></script>
+</body>
+</html>

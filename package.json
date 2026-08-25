@@ -1,0 +1,19 @@
+{
+  "name": "fit-analyzer-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Analyseur FIT — version web installable (PWA) pour Android/mobile. 100% hors ligne après installation.",
+  "scripts": {
+    "build": "npm run build:vendor && npm run build:app",
+    "build:vendor": "esbuild src/fit-entry.js --bundle --format=iife --platform=browser --outfile=js/fit-file-parser.bundle.js --minify",
+    "build:app": "esbuild src/app.js --bundle --format=iife --platform=browser --outfile=js/app.bundle.js",
+    "serve": "python3 -m http.server 8000"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "fit-file-parser": "^5.0.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

@@ -1,0 +1,631 @@
+/* ==========================================================================
+   Analyseur FIT — feuille de style
+   Direction : cartographie topographique alpine (papier IGN, courbes de
+   niveau bistre, vert forêt, rouge des routes) et signalétique de col.
+   Contrainte : application hors ligne, donc uniquement des polices système.
+   Bahnschrift est le DIN condensé livré avec Windows — la typo des panneaux
+   routiers — avec repli sur les condensées macOS puis sur system-ui.
+   ========================================================================== */
+
+:root {
+  --paper:        #e8e9e3;
+  --paper-raised: #f4f4ef;
+  --paper-sunk:   #dedfd7;
+  --ink:          #24231f;
+  --ink-soft:     #6b6a62;
+  --ink-faint:    #9a988d;
+  --contour:      #c3bba6;
+  --forest:       #3a5a46;
+  --forest-light: #5c806a;
+  --route:        #c2452d;
+  --glacier:      #6f97ad;
+  --amber:        #b8862f;
+
+  --font-sign: "Bahnschrift", "Avenir Next Condensed", "Helvetica Neue Condensed",
+               "Arial Narrow", "DIN Alternate", system-ui, sans-serif;
+  --font-body: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-data: "Consolas", "SF Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+
+  --rail: 208px;
+  --radius: 3px;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background-color: var(--paper);
+  /* Trame de courbes de niveau : motif SVG en ligne (aucune ressource externe) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='none' stroke='%23c3bba6' stroke-width='0.7' opacity='0.30'%3E%3Cpath d='M-20 40 C 20 12, 60 68, 100 40 S 170 12, 200 44'/%3E%3Cpath d='M-20 72 C 20 44, 60 100, 100 72 S 170 44, 200 76'/%3E%3Cpath d='M-20 104 C 20 76, 60 132, 100 104 S 170 76, 200 108'/%3E%3C/g%3E%3C/svg%3E");
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------- Layout */
+
+#app { display: flex; min-height: 100vh; }
+
+.rail {
+  width: var(--rail);
+  flex-shrink: 0;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 22px 0;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.brand { padding: 0 20px 22px; border-bottom: 1px solid rgba(244,244,239,.14); }
+.brand-mark {
+  font-family: var(--font-sign);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  line-height: 1.1;
+}
+.brand-sub {
+  font-family: var(--font-sign);
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 5px;
+}
+
+.rail-nav { display: flex; flex-direction: column; padding: 14px 12px; gap: 2px; }
+.tab-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: rgba(244,244,239,.62);
+  font-family: var(--font-sign);
+  font-size: 14px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  transition: color .13s, background .13s;
+}
+.tab-btn:hover { color: var(--paper); background: rgba(244,244,239,.06); }
+.tab-btn.active {
+  color: var(--paper);
+  background: rgba(244,244,239,.09);
+  border-left-color: var(--route);
+}
+.tab-btn:focus-visible { outline: 2px solid var(--glacier); outline-offset: -2px; }
+
+.rail-foot {
+  margin-top: auto;
+  padding: 0 20px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-family: var(--font-sign);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+main { flex: 1; padding: 34px 40px 72px; max-width: 1080px; min-width: 0; }
+
+/* ------------------------------------------------------------ Typographie */
+
+.eyebrow {
+  font-family: var(--font-sign);
+  font-size: 11px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 0 0 6px;
+}
+h1 {
+  font-family: var(--font-sign);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  margin: 0 0 6px;
+  line-height: 1.1;
+}
+h2 {
+  font-family: var(--font-sign);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  margin: 38px 0 12px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--contour);
+}
+.lede { color: var(--ink-soft); max-width: 62ch; margin: 0 0 22px; }
+.muted { color: var(--ink-soft); font-size: 13px; }
+.tab-content { display: none; }
+.tab-content.active { display: block; animation: rise .22s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translateY(5px); } }
+
+/* ---------------------------------------------------------------- Blocs */
+
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--contour);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.card + .card { margin-top: 14px; }
+
+/* ---------------------------------------------------------------- Boutons */
+
+button { font-family: inherit; }
+
+.btn {
+  font-family: var(--font-sign);
+  font-size: 13px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .13s, color .13s, border-color .13s;
+}
+.btn:focus-visible { outline: 2px solid var(--glacier); outline-offset: 2px; }
+.btn-primary { background: var(--forest); color: #f4f4ef; }
+.btn-primary:hover:not(:disabled) { background: #2f4b3a; }
+.btn-primary:disabled { opacity: .5; cursor: default; }
+.btn-ghost { background: transparent; color: var(--ink); border-color: var(--contour); }
+.btn-ghost:hover { background: var(--paper-sunk); }
+.btn-quiet {
+  background: none; border: 0; color: var(--ink-soft);
+  font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  font-family: var(--font-sign); cursor: pointer; padding: 6px 2px;
+}
+.btn-quiet:hover { color: var(--route); }
+.btn-row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+
+/* ---------------------------------------------------------------- Tables */
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+@media (max-width: 860px) {
+  /* Ombre de défilement qui s'estompe d'elle-même une fois arrivé au bout :
+     deux dégradés en background-attachment:local (collés au contenu qui
+     défile) et deux en background-attachment:scroll (fixes), qui se
+     recouvrent tant qu'il reste du contenu cache de ce cote. Signale qu'on
+     peut glisser sans qu'un JS de suivi de scroll soit nécessaire. */
+  .table-scroll {
+    background:
+      linear-gradient(to right, var(--paper-raised) 30%, transparent),
+      linear-gradient(to left, var(--paper-raised) 30%, transparent) 100% 0,
+      linear-gradient(to right, rgba(36,35,31,.12), transparent 20px),
+      linear-gradient(to left, rgba(36,35,31,.12), transparent 20px) 100% 0;
+    background-repeat: no-repeat;
+    background-size: 28px 100%, 28px 100%, 12px 100%, 12px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+}
+thead th {
+  font-family: var(--font-sign);
+  font-size: 10px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 600;
+  text-align: left;
+  padding: 0 12px 9px;
+  border-bottom: 1px solid var(--contour);
+  white-space: nowrap;
+}
+tbody td { padding: 11px 12px; border-bottom: 1px solid rgba(195,187,166,.42); }
+tbody tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--font-data); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ride-row { cursor: pointer; }
+.ride-row:hover td { background: var(--paper-sunk); }
+.ride-row:focus-visible { outline: 2px solid var(--glacier); outline-offset: -2px; }
+.fname { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.date-cell { font-family: var(--font-data); font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+
+/* --------------------------------------------------------------- Mesures */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: 1px;
+  background: var(--contour);
+  border: 1px solid var(--contour);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.metric { background: var(--paper-raised); padding: 13px 14px; }
+.metric .k {
+  font-family: var(--font-sign);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.metric .v {
+  font-family: var(--font-sign);
+  font-size: 23px;
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.metric .v small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  margin-left: 2px;
+  letter-spacing: .04em;
+}
+
+/* --------------------------------------------- Panneau de col (signature) */
+
+.signpost {
+  background: var(--forest);
+  color: #f4f4ef;
+  border-radius: var(--radius);
+  padding: 15px 20px;
+  display: flex;
+  gap: 30px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  box-shadow: inset 0 0 0 2px rgba(244,244,239,.16);
+}
+.signpost .sp {
+  display: flex;
+  flex-direction: column;
+  min-width: 74px;
+}
+.signpost .sp-k {
+  font-family: var(--font-sign);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: rgba(244,244,239,.66);
+}
+.signpost .sp-v {
+  font-family: var(--font-sign);
+  font-size: 27px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.signpost .sp-v small { font-size: 13px; font-weight: 400; opacity: .72; margin-left: 2px; }
+.signpost .sp.wide { min-width: 106px; }
+
+/* ------------------------------------------------------- Profil interactif */
+
+.profile-wrap { position: relative; margin: 12px 0 0; }
+.profile-svg { display: block; width: 100%; touch-action: none; user-select: none; }
+.profile-svg .ridge { fill: none; stroke: var(--ink); stroke-width: 1.4; }
+.profile-svg .hr-line { fill: none; stroke: var(--route); stroke-width: 1.2; opacity: .82; }
+.profile-svg .axis-line { stroke: var(--contour); stroke-width: 1; }
+.profile-svg .axis-txt {
+  font-family: var(--font-data);
+  font-size: 10px;
+  fill: var(--ink-soft);
+}
+.profile-svg .sel-band { fill: var(--forest); opacity: .16; }
+.profile-svg .handle-line { stroke: var(--forest); stroke-width: 2; }
+.profile-svg .handle-hit { fill: transparent; cursor: ew-resize; }
+.profile-svg .handle-cap {
+  fill: var(--forest);
+  stroke: #f4f4ef;
+  stroke-width: 1.2;
+  cursor: ew-resize;
+}
+.profile-svg .handle-cap-txt {
+  font-family: var(--font-sign);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  fill: #f4f4ef;
+  pointer-events: none;
+  text-anchor: middle;
+}
+.profile-svg .handle-grp:focus { outline: none; }
+.profile-svg .handle-grp:focus-visible .handle-cap {
+  stroke: var(--glacier);
+  stroke-width: 3;
+}
+.profile-svg .handle-grp:focus-visible .handle-hit {
+  fill: rgba(111, 151, 173, .16);
+  rx: 4px;
+}
+.profile-svg .handle-grp:hover .handle-cap { fill: #2f4b3a; }
+.profile-svg .hover-line { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 3 3; }
+.profile-svg .climb-tick { fill: var(--forest-light); opacity: .5; }
+
+.readout {
+  display: flex; gap: 20px; flex-wrap: wrap;
+  font-family: var(--font-data); font-size: 12px; color: var(--ink-soft);
+  min-height: 20px; margin-top: 8px;
+}
+.readout b { color: var(--ink); font-weight: 600; }
+
+.editor-hint {
+  font-size: 12.5px; color: var(--ink-soft);
+  margin: 12px 0 0; display: flex; gap: 7px; align-items: baseline;
+}
+.editor-hint kbd {
+  font-family: var(--font-data); font-size: 11px;
+  background: var(--paper-sunk); border: 1px solid var(--contour);
+  border-radius: 2px; padding: 1px 5px;
+}
+
+/* --------------------------------------------------------------- Montées */
+
+.climb {
+  border: 1px solid var(--contour);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  margin-top: 12px;
+  overflow: hidden;
+}
+.climb-head {
+  display: flex; align-items: center; gap: 15px;
+  padding: 14px 18px; cursor: pointer; width: 100%;
+  background: none; border: 0; text-align: left; color: inherit;
+}
+.climb-head:hover { background: var(--paper-sunk); }
+.climb-head:focus-visible { outline: 2px solid var(--glacier); outline-offset: -2px; }
+.climb-no {
+  font-family: var(--font-sign); font-size: 12px; font-weight: 700;
+  letter-spacing: .08em; color: #f4f4ef; background: var(--ink);
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.climb-title { flex: 1; min-width: 0; }
+.climb-title .t {
+  font-family: var(--font-sign); font-size: 16px; font-weight: 600;
+  letter-spacing: .02em;
+}
+.climb-title .s { font-size: 12px; color: var(--ink-soft); font-family: var(--font-data); }
+.btn-rename {
+  background: none; border: 0; color: var(--forest);
+  font-size: 11px; font-family: var(--font-sign); letter-spacing: .04em;
+  text-transform: uppercase; padding: 2px 4px; margin-left: 2px;
+  cursor: pointer; vertical-align: middle;
+}
+.btn-rename:hover, .btn-rename:focus-visible { text-decoration: underline; outline: none; }
+.climb-vam {
+  font-family: var(--font-sign); font-size: 19px; font-weight: 700;
+  color: var(--forest); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.climb-vam small { font-size: 11px; font-weight: 400; color: var(--ink-soft); }
+.chev { color: var(--ink-faint); transition: transform .18s; flex-shrink: 0; }
+.climb.open .chev { transform: rotate(90deg); }
+.climb-body { display: none; padding: 0 18px 18px; }
+.climb.open .climb-body { display: block; }
+
+.tag {
+  font-family: var(--font-sign); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 2px;
+  background: var(--amber); color: #fff; margin-left: 8px; white-space: nowrap;
+}
+
+.drift-up { color: var(--route); }
+.drift-down { color: var(--forest); }
+
+/* ---------------------------------------------------------------- Zones */
+
+.zones { display: flex; flex-direction: column; gap: 7px; }
+.zone { display: flex; align-items: center; gap: 12px; font-size: 12.5px; }
+.zone-k {
+  font-family: var(--font-sign); letter-spacing: .06em; text-transform: uppercase;
+  width: 116px; flex-shrink: 0; color: var(--ink-soft); font-size: 11px;
+}
+.zone-bar { flex: 1; height: 13px; background: var(--paper-sunk); border-radius: 2px; overflow: hidden; }
+.zone-bar > span { display: block; height: 100%; background: var(--forest-light); }
+.zone-bar > span.z4 { background: var(--amber); }
+.zone-bar > span.z5 { background: var(--route); }
+.zone-v { width: 48px; text-align: right; font-family: var(--font-data); font-size: 12px; }
+
+/* ---------------------------------------------------------------- États */
+
+.loading { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-size: 13px; padding: 16px 0; }
+.spin {
+  width: 13px; height: 13px; border: 2px solid var(--contour);
+  border-top-color: var(--forest); border-radius: 50%;
+  animation: spin .7s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.notice {
+  border-left: 3px solid var(--route);
+  background: rgba(194,69,45,.07);
+  padding: 12px 15px; border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 13px; margin-top: 12px;
+}
+.notice.ok { border-left-color: var(--forest); background: rgba(58,90,70,.08); }
+
+.empty { text-align: center; padding: 46px 20px; color: var(--ink-soft); }
+.empty .big {
+  font-family: var(--font-sign); font-size: 17px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink); margin-bottom: 7px;
+}
+
+.row { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; margin: 14px 0; }
+.row label { font-family: var(--font-sign); font-size: 11px; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-soft); }
+select {
+  font-family: var(--font-body); font-size: 13px; padding: 8px 11px;
+  border: 1px solid var(--contour); border-radius: var(--radius);
+  background: var(--paper-raised); color: var(--ink);
+}
+select:focus-visible { outline: 2px solid var(--glacier); outline-offset: 1px; }
+
+input[type="text"], input[type="date"], input[type="number"] {
+  font-family: var(--font-body); font-size: 14px; padding: 8px 11px;
+  border: 1px solid var(--contour); border-radius: var(--radius);
+  background: var(--paper-raised); color: var(--ink); width: 100%; max-width: 220px;
+}
+input[type="text"]:focus-visible, input[type="date"]:focus-visible, input[type="number"]:focus-visible {
+  outline: 2px solid var(--glacier); outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------- Objectifs */
+
+.goal-row { border: 1px solid var(--contour); border-radius: var(--radius); padding: 16px; }
+.goal-row + .goal-row { margin-top: 12px; }
+.goal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.goal-name { font-family: var(--font-sign); font-size: 17px; font-weight: 600; }
+.goal-countdown {
+  font-family: var(--font-sign); font-weight: 700; color: var(--forest);
+  text-align: right; white-space: nowrap; flex-shrink: 0;
+}
+.goal-countdown b { font-size: 24px; font-variant-numeric: tabular-nums; }
+.goal-countdown small { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin-left: 3px; color: var(--ink-soft); }
+.goal-countdown.past { color: var(--ink-faint); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.goal-form {
+  display: flex; flex-direction: column; gap: 10px; margin-top: 14px;
+  border: 1px solid var(--contour); border-radius: var(--radius); padding: 16px;
+  background: var(--paper-raised);
+}
+.goal-form .row { margin: 0; justify-content: space-between; flex-wrap: nowrap; }
+.goal-form label { flex-shrink: 0; }
+
+.picker { display: flex; flex-direction: column; gap: 1px; max-height: 260px; overflow-y: auto; }
+.pick {
+  display: flex; align-items: center; gap: 11px; padding: 9px 11px;
+  cursor: pointer; border-radius: 2px; font-size: 13px;
+}
+.pick:hover { background: var(--paper-sunk); }
+.pick input { accent-color: var(--forest); }
+
+.import-line { padding: 8px 0; border-bottom: 1px solid rgba(195,187,166,.42); font-size: 13px; }
+.import-line:last-child { border-bottom: 0; }
+.st-ok { color: var(--forest); }
+.st-err { color: var(--route); }
+.st-skip { color: var(--ink-faint); }
+
+img.chart { max-width: 100%; display: block; border-radius: 2px; }
+
+/* ---------------------------------------------------------- Mini-graphiques SVG */
+/* Remplacent les images matplotlib de la version desktop : rendu vectoriel
+   natif, net sur les écrans haute densité des téléphones. */
+
+.mini-chart { display: block; width: 100%; height: auto; }
+.mini-chart .chart-grid { stroke: var(--contour); stroke-width: 1; opacity: .55; }
+.mini-chart .chart-axis-txt {
+  font-family: var(--font-data); font-size: 10.5px; fill: var(--ink-soft);
+}
+.mini-chart .chart-axis-label {
+  font-family: var(--font-sign); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; fill: var(--ink-soft);
+}
+.mini-chart .chart-title {
+  font-family: var(--font-sign); font-size: 12px; font-weight: 600;
+  letter-spacing: .04em; fill: var(--ink);
+}
+.mini-chart .chart-line { fill: none; stroke: var(--forest); stroke-width: 2; }
+.mini-chart .chart-trend {
+  stroke: var(--route); stroke-width: 1.3; stroke-dasharray: 5 4; opacity: .8;
+}
+.mini-chart .chart-dot { fill: var(--forest); stroke: var(--paper-raised); stroke-width: 1.5; }
+.mini-chart .chart-scatter-dot { stroke: var(--paper-raised); stroke-width: 1.4; opacity: .92; }
+.mini-chart .chart-point-label {
+  font-family: var(--font-data); font-size: 9.5px; fill: var(--ink-soft);
+}
+.mini-chart .chart-legend-txt {
+  font-family: var(--font-sign); font-size: 10.5px; fill: var(--ink-soft);
+}
+
+/* ---------------------------------------------------------------- PWA / mobile */
+
+/* Zones de sécurité (encoche, barre de gestes Android) : évite que le rail
+   ou le contenu passent sous les éléments système. Scopé desktop uniquement
+   ici (>860px) ; le cas mobile est géré dans le bloc @media plus bas, avec
+   la barre de navigation basse fixe dont il faut aussi éviter le survol. */
+@media (min-width: 861px) {
+  .rail { padding-left: max(0px, env(safe-area-inset-left)); }
+  main {
+    padding-left: max(40px, calc(40px + env(safe-area-inset-left)));
+    padding-right: max(40px, calc(40px + env(safe-area-inset-right)));
+  }
+}
+
+/* Empêche le double-tap-to-zoom accidentel sur les boutons/lignes cliquables
+   et le halo de surbrillance au tap sur Android/Chrome. */
+button, .ride-row, .tab-btn, .climb-head, .pick {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Empêche le zoom involontaire au focus d'un <select> sur iOS/Android
+   (le navigateur zoome si la taille de police du champ est < 16px). */
+select { font-size: max(14px, 16px); }
+
+/* input[type=file] natif masqué : le vrai déclencheur est le bouton
+   "Choisir des fichiers" (meilleure cohérence visuelle inter-plateformes). */
+#file-picker { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+
+.install-banner {
+  display: none;
+  align-items: center; gap: 12px;
+  background: var(--forest); color: #f4f4ef;
+  padding: 12px 16px; border-radius: var(--radius);
+  margin-bottom: 16px; font-size: 13px;
+}
+.install-banner.show { display: flex; }
+.install-banner button {
+  margin-left: auto; background: rgba(244,244,239,.16); color: #fff;
+  border: 1px solid rgba(244,244,239,.3); border-radius: var(--radius);
+  padding: 6px 12px; font-family: var(--font-sign); font-size: 12px;
+  letter-spacing: .05em; text-transform: uppercase; cursor: pointer; flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+@media (max-width: 860px) {
+  #app { flex-direction: column; }
+
+  .rail {
+    width: 100%; height: auto; position: static; padding: 14px 0 10px;
+  }
+  .brand { padding: 0 18px 12px; }
+
+  /* Barre de navigation BASSE fixe (convention Android/Material), plutôt
+     qu'une rangée d'onglets qui défile en haut : les 4 sections restent
+     toutes visibles et atteignables au pouce, sans geste de découverte
+     nécessaire — un simple overflow-x:auto ne le garantissait pas (testé :
+     techniquement franchissable, mais "Comparer" restait invisible sans
+     indice qu'il fallait glisser). */
+  .rail-nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex-direction: row; overflow: visible;
+    background: var(--ink);
+    border-top: 1px solid rgba(244,244,239,.14);
+    padding: 4px max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom))
+             max(4px, env(safe-area-inset-left));
+  }
+  .tab-btn {
+    flex: 1 1 0;
+    border-left: 0; border-radius: var(--radius);
+    text-align: center; white-space: nowrap;
+    font-size: 11px; letter-spacing: .05em;
+    padding: 9px 2px;
+  }
+  .tab-btn.active { border-left-color: transparent; background: rgba(244,244,239,.12); }
+
+  .rail-foot { display: none; }
+
+  main {
+    padding: 22px max(18px, calc(18px + env(safe-area-inset-right)))
+             max(86px, calc(86px + env(safe-area-inset-bottom)))
+             max(18px, calc(18px + env(safe-area-inset-left)));
+  }
+  table { min-width: 620px; }
+  .signpost { gap: 16px 22px; padding: 14px; }
+  .signpost .sp-v { font-size: 22px; }
+}
