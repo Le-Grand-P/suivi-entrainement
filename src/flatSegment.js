@@ -94,6 +94,14 @@ function computeFlatSegmentMetrics(df, start, end, cfg) {
   }
   const avgHr = hrCount > 0 ? hrSum / hrCount : NaN;
   const avgSpeedKmh = durS > 0 ? (distanceM / 1000) / (durS / 3600) : NaN;
+  // FC par km/h : plus bas = plus efficace (moins de battements de cœur
+  // nécessaires pour une vitesse donnée). Moins sensible que la vitesse
+  // brute à qui pousse le rythme dans un groupe — si tu roules derrière
+  // quelqu'un de plus fort, ta vitesse peut monter à FC comparable
+  // (aspiration), ce que la vitesse seule ne distingue pas d'un vrai gain
+  // de forme, alors que ce ratio reste au moins partiellement révélateur.
+  const hrPerKmh = (Number.isFinite(avgHr) && Number.isFinite(avgSpeedKmh) && avgSpeedKmh > 0)
+    ? avgHr / avgSpeedKmh : NaN;
 
   const cumulGain = cumulativeElevationGainSeries(df.alt_smooth, cfg.ELEVATION_THRESHOLD_M);
   const elevationGainBeforeM = cumulGain[start];
@@ -109,6 +117,7 @@ function computeFlatSegmentMetrics(df, start, end, cfg) {
     distance_m: round(distanceM),
     avg_speed_kmh: round(avgSpeedKmh, 1),
     avg_hr: round(avgHr),
+    hr_per_kmh: round(hrPerKmh, 2),
     start_km: round(startKm, 1),
     elevation_gain_before_m: round(elevationGainBeforeM),
     truncated,

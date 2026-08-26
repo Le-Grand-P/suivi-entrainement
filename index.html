@@ -57,6 +57,11 @@
       <p class="eyebrow">Archives</p>
       <h1>Mes sorties</h1>
       <p class="lede">Ouvre une sortie pour voir son profil et ses montées.</p>
+      <div class="row" id="recompute-row">
+        <button class="btn-ghost" id="btn-recompute-all">Recalculer toutes les sorties</button>
+        <span class="muted">Réanalyse chaque sortie à partir de son .fit déjà enregistré, avec le moteur de calcul à jour — utile après un correctif ou un changement de réglage, sans réimporter.</span>
+      </div>
+      <div id="recompute-out"></div>
       <div id="rides-out" class="card"></div>
     </section>
 
@@ -126,15 +131,6 @@
         être réimportée pour y apparaître.
       </p>
       <div id="segments-out" class="card"></div>
-
-      <h2>Toutes les montées</h2>
-      <p class="lede">
-        À VAM égale, une fréquence cardiaque qui baisse au fil des semaines
-        traduit un gain d'efficience. Compare de préférence des montées de
-        pentes voisines.
-      </p>
-      <div id="climb-chart" class="card"></div>
-      <div id="climb-table"></div>
     </section>
 
     <section id="tab-compare" class="tab-content">

@@ -165,6 +165,11 @@ function summarizeSegment(seg, index) {
       hr_drift_bpm: c.hr_drift_bpm,
       est_power_w: c.est_power_w,
       duration_s: c.duration_s,
+      // Indices bruts dans le parse de LEUR sortie respective (pas
+      // comparables entre occurrences) : utilisés uniquement pour retrouver
+      // le tracé GPS précis de cette occurrence via get_climb_path().
+      start_idx: c.start_idx,
+      end_idx: c.end_idx,
     })),
   };
 }

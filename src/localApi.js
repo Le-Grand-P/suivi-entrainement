@@ -119,6 +119,34 @@ export async function get_ride_detail(id) {
   return { ...ride, charts: {} };
 }
 
+/**
+ * Recalcule une sortie déjà en base à partir de son .fit ORIGINAL déjà
+ * stocké, avec le moteur d'analyse ACTUEL — sans redemander le fichier à
+ * l'utilisateur. Utile après un correctif du modèle (calcul de puissance,
+ * ajout des coordonnées GPS aux montées...) pour mettre à jour l'historique
+ * sans passer par supprimer + réimporter chaque sortie une par une.
+ */
+export async function recompute_ride(id) {
+  const ride = await db.getRide(id);
+  if (!ride) return { error: "Sortie introuvable." };
+  if (!ride.hasFitBlob) {
+    return { error: "Fichier .fit original introuvable pour cette sortie — impossible de la recalculer (elle doit être réimportée)." };
+  }
+  invalidateCache(id); // sans ça, un recalcul répété réutiliserait une analyse mise en cache
+  const cfg = await getCfg();
+  const blob = await db.getRideFitBlob(id);
+  let dfRaw;
+  try {
+    dfRaw = await parseFitFile(blob, ride.filename);
+  } catch (e) {
+    return { error: e.message };
+  }
+  const { globalStats, climbs, df } = analyzeRide(dfRaw, cfg);
+  const flatSegment = detectFlatSegment(df, cfg);
+  await db.updateRideAnalysis(id, { stats: globalStats, climbs, flatSegment });
+  return { status: "ok", n_climbs: climbs.length, has_flat_segment: !!flatSegment };
+}
+
 /* ------------------------------------------------------------------ */
 /* Série + éditeur de bornes de montée                                 */
 /* ------------------------------------------------------------------ */
@@ -395,6 +423,35 @@ export async function get_climb_segments() {
   // ont le plus de valeur pour suivre une progression.
   result.segments.sort((a, b) => b.n_occurrences - a.n_occurrences);
   return result;
+}
+
+/**
+ * Coordonnées GPS d'UNE occurrence précise d'une montée (entre start_idx et
+ * end_idx bruts de SA sortie), pour l'afficher sur une carte. Réutilise le
+ * .fit déjà stocké — pas besoin de redemander le fichier.
+ */
+export async function get_climb_path(rideId, startIdx, endIdx) {
+  const ride = await db.getRide(rideId);
+  if (!ride) return { error: "Sortie introuvable." };
+  if (!ride.hasFitBlob) return { error: "Fichier .fit introuvable pour cette sortie." };
+  let analysis;
+  try {
+    analysis = await getAnalysis(rideId);
+  } catch (e) {
+    return { error: e.message };
+  }
+  const df = analysis.df;
+  const n = df.n;
+  const s = Math.max(0, Math.min(startIdx, n - 1));
+  const e = Math.max(0, Math.min(endIdx, n - 1));
+  if (e <= s) return { error: "Segment invalide." };
+
+  const lat = [], lon = [];
+  for (let i = s; i <= e; i++) {
+    lat.push(Number.isFinite(df.lat[i]) ? round(df.lat[i], 5) : null);
+    lon.push(Number.isFinite(df.lon[i]) ? round(df.lon[i], 5) : null);
+  }
+  return { lat, lon };
 }
 
 /**

@@ -85,6 +85,22 @@ export async function listRides() {
   }));
 }
 
+/**
+ * Remplace les champs calculés (stats/climbs/flat_segment) d'une sortie déjà
+ * en base, SANS toucher au fichier .fit original ni aux métadonnées d'import
+ * — c'est ce qui permet de "recalculer" une sortie avec le moteur d'analyse
+ * à jour (après un correctif du modèle, un nouveau seuil...) sans avoir à la
+ * supprimer et la réimporter.
+ */
+export async function updateRideAnalysis(id, { stats, climbs, flatSegment }) {
+  const store = await tx(STORE_RIDES, "readwrite");
+  const existing = await wrapRequest(store.get(id));
+  if (!existing) throw new Error("Sortie introuvable.");
+  await wrapRequest(store.put({
+    ...existing, stats, climbs, flat_segment: flatSegment ?? null,
+  }));
+}
+
 export async function getRide(id) {
   const store = await tx(STORE_RIDES, "readonly");
   const r = await wrapRequest(store.get(id));

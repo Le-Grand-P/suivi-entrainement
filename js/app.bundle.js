@@ -13,6 +13,7 @@
     compare_rides: () => compare_rides,
     delete_goal: () => delete_goal,
     delete_ride: () => delete_ride,
+    get_climb_path: () => get_climb_path,
     get_climb_progression: () => get_climb_progression,
     get_climb_segments: () => get_climb_segments,
     get_compare_metrics: () => get_compare_metrics,
@@ -28,6 +29,7 @@
     list_goals: () => list_goals,
     list_rides: () => list_rides,
     preview_climb: () => preview_climb,
+    recompute_ride: () => recompute_ride,
     rename_climb_segment: () => rename_climb_segment,
     reset_climbs: () => reset_climbs,
     save_climb_bounds: () => save_climb_bounds,
@@ -101,6 +103,17 @@
       ride_date: r.ride_date,
       imported_at: r.imported_at,
       ...r.stats
+    }));
+  }
+  async function updateRideAnalysis(id, { stats, climbs, flatSegment }) {
+    const store = await tx(STORE_RIDES, "readwrite");
+    const existing = await wrapRequest(store.get(id));
+    if (!existing) throw new Error("Sortie introuvable.");
+    await wrapRequest(store.put({
+      ...existing,
+      stats,
+      climbs,
+      flat_segment: flatSegment ?? null
     }));
   }
   async function getRide(id) {
@@ -1214,7 +1227,12 @@
         avg_hr: c.avg_hr,
         hr_drift_bpm: c.hr_drift_bpm,
         est_power_w: c.est_power_w,
-        duration_s: c.duration_s
+        duration_s: c.duration_s,
+        // Indices bruts dans le parse de LEUR sortie respective (pas
+        // comparables entre occurrences) : utilisés uniquement pour retrouver
+        // le tracé GPS précis de cette occurrence via get_climb_path().
+        start_idx: c.start_idx,
+        end_idx: c.end_idx
       }))
     };
   }
@@ -1286,6 +1304,7 @@
     }
     const avgHr = hrCount > 0 ? hrSum / hrCount : NaN;
     const avgSpeedKmh = durS > 0 ? distanceM / 1e3 / (durS / 3600) : NaN;
+    const hrPerKmh = Number.isFinite(avgHr) && Number.isFinite(avgSpeedKmh) && avgSpeedKmh > 0 ? avgHr / avgSpeedKmh : NaN;
     const cumulGain = cumulativeElevationGainSeries(df.alt_smooth, cfg.ELEVATION_THRESHOLD_M);
     const elevationGainBeforeM = cumulGain[start];
     const truncated = cappedEnd < end;
@@ -1298,6 +1317,7 @@
       distance_m: round2(distanceM),
       avg_speed_kmh: round2(avgSpeedKmh, 1),
       avg_hr: round2(avgHr),
+      hr_per_kmh: round2(hrPerKmh, 2),
       start_km: round2(startKm, 1),
       elevation_gain_before_m: round2(elevationGainBeforeM),
       truncated
@@ -1407,6 +1427,26 @@
     const ride = await getRide(id);
     if (!ride) return null;
     return { ...ride, charts: {} };
+  }
+  async function recompute_ride(id) {
+    const ride = await getRide(id);
+    if (!ride) return { error: "Sortie introuvable." };
+    if (!ride.hasFitBlob) {
+      return { error: "Fichier .fit original introuvable pour cette sortie \u2014 impossible de la recalculer (elle doit \xEAtre r\xE9import\xE9e)." };
+    }
+    invalidateCache(id);
+    const cfg = await getCfg();
+    const blob = await getRideFitBlob(id);
+    let dfRaw;
+    try {
+      dfRaw = await parseFitFile(blob, ride.filename);
+    } catch (e) {
+      return { error: e.message };
+    }
+    const { globalStats, climbs, df } = analyzeRide(dfRaw, cfg);
+    const flatSegment = detectFlatSegment(df, cfg);
+    await updateRideAnalysis(id, { stats: globalStats, climbs, flatSegment });
+    return { status: "ok", n_climbs: climbs.length, has_flat_segment: !!flatSegment };
   }
   async function get_ride_series(id, maxPoints = 1600) {
     const ride = await getRide(id);
@@ -1623,6 +1663,28 @@
     result.segments = applyStoredNames(result.segments, storedNames);
     result.segments.sort((a, b) => b.n_occurrences - a.n_occurrences);
     return result;
+  }
+  async function get_climb_path(rideId, startIdx, endIdx) {
+    const ride = await getRide(rideId);
+    if (!ride) return { error: "Sortie introuvable." };
+    if (!ride.hasFitBlob) return { error: "Fichier .fit introuvable pour cette sortie." };
+    let analysis;
+    try {
+      analysis = await getAnalysis(rideId);
+    } catch (e2) {
+      return { error: e2.message };
+    }
+    const df = analysis.df;
+    const n = df.n;
+    const s = Math.max(0, Math.min(startIdx, n - 1));
+    const e = Math.max(0, Math.min(endIdx, n - 1));
+    if (e <= s) return { error: "Segment invalide." };
+    const lat = [], lon = [];
+    for (let i = s; i <= e; i++) {
+      lat.push(Number.isFinite(df.lat[i]) ? round3(df.lat[i], 5) : null);
+      lon.push(Number.isFinite(df.lon[i]) ? round3(df.lon[i], 5) : null);
+    }
+    return { lat, lon };
   }
   async function rename_climb_segment(anchor, name, existingNameId) {
     if (!anchor || !Number.isFinite(anchor.anchor_lat) || !Number.isFinite(anchor.anchor_lon)) {
@@ -2642,6 +2704,11 @@
   }
   var activeProfile = null;
   var activeMap = null;
+  var activeSegmentMaps = [];
+  function destroyAllSegmentMaps() {
+    activeSegmentMaps.forEach((m) => destroyRouteMap(m));
+    activeSegmentMaps = [];
+  }
   function showTab(name) {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tab-content").forEach((s) => s.classList.remove("active"));
@@ -2656,6 +2723,7 @@
       destroyRouteMap(activeMap);
       activeMap = null;
     }
+    if (name !== "progression") destroyAllSegmentMaps();
     if (name === "rides") loadRides();
     if (name === "progression") loadProgression();
     if (name === "compare") loadCompare();
@@ -2745,6 +2813,42 @@
       out.innerHTML = notice(e.message);
     }
   }
+  document.getElementById("btn-recompute-all").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-recompute-all");
+    const out = document.getElementById("recompute-out");
+    if (!confirm("Recalculer toutes les sorties avec le moteur de calcul actuel ? \xC7a peut prendre un moment selon le nombre de sorties.")) return;
+    btn.disabled = true;
+    try {
+      const rides = await call("list_rides");
+      if (!rides.length) {
+        out.innerHTML = notice("Aucune sortie \xE0 recalculer.");
+        return;
+      }
+      let ok = 0, failed = 0;
+      const failures = [];
+      for (let i = 0; i < rides.length; i++) {
+        const r = rides[i];
+        out.innerHTML = spinner(`Recalcul ${i + 1}/${rides.length} \u2014 ${r.filename}`);
+        try {
+          await call("recompute_ride", r.id);
+          ok++;
+        } catch (e) {
+          failed++;
+          failures.push(`${r.filename} : ${e.message}`);
+        }
+      }
+      out.innerHTML = notice(
+        `${ok} sortie(s) recalcul\xE9e(s)` + (failed ? `, ${failed} \xE9chec(s) :
+` + failures.join("\n") : "."),
+        failed === 0
+      );
+      loadRides();
+    } catch (e) {
+      out.innerHTML = notice(e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
   var currentRide = null;
   var currentSeries = null;
   var currentSegments = [];
@@ -2804,6 +2908,7 @@
         html += `<div class="metrics">
         ${metric("Vitesse moy.", num(fs.avg_speed_kmh, "km/h", 1))}
         ${metric("FC moyenne", num(fs.avg_hr, "bpm"))}
+        ${metric("FC / km/h", num(fs.hr_per_kmh, "", 2))}
         ${metric("Dur\xE9e", dur(fs.duration_s))}
         ${metric("Longueur", num(fs.distance_m / 1e3, "km", 1))}
         ${metric("Intervient au km", num(fs.start_km, "km", 1))}
@@ -3084,7 +3189,6 @@
       }
     }
     progChart(sel.value);
-    climbProg();
     loadGoals();
     loadTrainingLoad();
     loadDashboard();
@@ -3260,23 +3364,28 @@
       }
       if (segs.length >= 2) {
         const dates = segs.map((s) => new Date(s.ride_date).getTime());
-        const speeds = segs.map((s) => s.avg_speed_kmh);
-        renderProgressionChart(chart, dates, speeds, {
-          ylabel: "Vitesse (km/h)",
-          title: "Vitesse sur le segment plat de r\xE9f\xE9rence"
+        const ratios = segs.map((s) => s.hr_per_kmh);
+        renderProgressionChart(chart, dates, ratios, {
+          ylabel: "FC / vitesse (bpm par km/h)",
+          title: "Efficience sur le segment plat de r\xE9f\xE9rence"
         });
+        chart.innerHTML += `<p class="muted" style="margin-top:10px">
+        Plus bas = plus efficace (moins de battements de c\u0153ur pour une m\xEAme vitesse).
+        Reste sensible \xE0 l'aspiration en groupe \u2014 rouler dans la roue de quelqu'un de
+        plus fort peut faire baisser ce ratio sans gain de forme r\xE9el.</p>`;
       } else {
         chart.innerHTML = `<p class="muted">Une seule sortie avec segment plat pour l'instant \u2014
         le graphique appara\xEEtra \xE0 partir de la deuxi\xE8me.</p>`;
       }
       table.innerHTML = `<div class="card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr>
-        <th>Date</th><th>Sortie</th><th>Vitesse</th><th>FC</th><th>Dur\xE9e</th><th>Longueur</th>
+        <th>Date</th><th>Sortie</th><th>Vitesse</th><th>FC</th><th>FC/km/h</th><th>Dur\xE9e</th><th>Longueur</th>
         <th>Km sortie</th><th>D+ avant</th>
       </tr></thead><tbody>` + segs.slice().reverse().map((s) => `<tr>
         <td class="date-cell">${frDate(s.ride_date)}</td>
         <td class="fname">${esc(s.ride_filename)}</td>
-        <td class="num"><b>${nf(s.avg_speed_kmh, 1)}</b> km/h</td>
+        <td class="num">${nf(s.avg_speed_kmh, 1)} km/h</td>
         <td class="num">${nf(s.avg_hr)} bpm</td>
+        <td class="num"><b>${nf(s.hr_per_kmh, 2)}</b></td>
         <td class="num">${dur(s.duration_s).replace(/<\/?small>/g, "")}${s.truncated ? " \u26A0" : ""}</td>
         <td class="num">${nf(s.distance_m / 1e3, 1)} km</td>
         <td class="num">${nf(s.start_km, 1)} km</td>
@@ -3288,6 +3397,7 @@
   }
   async function loadClimbSegments() {
     const out = document.getElementById("segments-out");
+    destroyAllSegmentMaps();
     out.innerHTML = spinner();
     try {
       const data = await call("get_climb_segments");
@@ -3304,15 +3414,25 @@
           <span class="climb-no">${s.n_occurrences}\xD7</span>
           <span class="climb-title">
             <span class="t">${esc(s.name || s.label)}</span>
-            <span class="s">${s.name ? `${esc(s.label)} \xB7 ` : ""}${frDate(s.first_date)} \u2192 ${frDate(s.last_date)}
-              ${s.vam_trend_pct !== null ? ` \xB7 VAM ${signed(s.vam_trend_pct, " %", 1).replace(/<\/?small>/g, "")}` : ""}
-              <button class="btn-rename" data-rename="${i}" title="Renommer" aria-label="Renommer cette mont\xE9e">\u270E renommer</button></span>
+            <span class="s">${s.name ? `${esc(s.label)} \xB7 ` : ""}${frDate(s.first_date)} \u2192 ${frDate(s.last_date)}</span>
           </span>
           <span class="climb-vam">${nf(s.best_vam_mh)}<small> m/h max</small></span>
           <span class="chev">\u25B8</span>
         </div>
         <div class="climb-body" id="segment-body-${i}">
-          <div class="table-scroll"><table><thead><tr>
+          <div class="metrics">
+            ${metric("Occurrences", s.n_occurrences + "\xD7")}
+            ${metric("Pente moy.", num(s.avg_grade_pct, " %", 1))}
+            ${metric("Longueur", num(s.avg_distance_m / 1e3, " km", 1))}
+            ${metric("D+ moyen", num(s.avg_elevation_m, " m"))}
+            ${metric("Meilleure VAM", num(s.best_vam_mh, " m/h"))}
+            ${metric("Tendance VAM", s.vam_trend_pct === null ? "\u2014" : signed(s.vam_trend_pct, " %", 1))}
+          </div>
+          <div class="btn-row" style="margin:14px 0">
+            <button class="btn-ghost" data-rename="${i}">\u270E Renommer cette mont\xE9e</button>
+          </div>
+          <div id="segment-map-${i}" class="card" style="padding:0; overflow:hidden"></div>
+          <div class="table-scroll" style="margin-top:14px"><table><thead><tr>
             <th>Date</th><th>Sortie</th><th>VAM</th><th>FC</th><th>D\xE9rive</th><th>Puiss.</th>
           </tr></thead><tbody>${s.occurrences.slice().reverse().map((o) => `<tr>
             <td class="date-cell">${frDate(o.ride_date)}</td>
@@ -3327,7 +3447,11 @@
       out.querySelectorAll("[data-seg]").forEach((h) => {
         h.setAttribute("role", "button");
         h.setAttribute("tabindex", "0");
-        const toggle = () => document.getElementById(`segment-${h.dataset.seg}`).classList.toggle("open");
+        const toggle = () => {
+          const opening = !document.getElementById(`segment-${h.dataset.seg}`).classList.contains("open");
+          document.getElementById(`segment-${h.dataset.seg}`).classList.toggle("open");
+          if (opening) loadSegmentMap(parseInt(h.dataset.seg, 10));
+        };
         h.addEventListener("click", toggle);
         h.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " ") {
@@ -3370,6 +3494,30 @@ Laisse vide pour revenir au nom automatique.`,
       out.innerHTML = notice(e.message);
     }
   }
+  async function loadSegmentMap(segIndex) {
+    const seg = currentSegments[segIndex];
+    const container = document.getElementById(`segment-map-${segIndex}`);
+    if (!container || container.dataset.built) return;
+    container.dataset.built = "1";
+    container.innerHTML = spinner("Chargement de la carte\u2026");
+    const occ = seg.occurrences[seg.occurrences.length - 1];
+    try {
+      const path = await call("get_climb_path", occ.ride_id, occ.start_idx, occ.end_idx);
+      const validCount = path.lat.filter((v) => v !== null).length;
+      if (validCount < 2) {
+        container.innerHTML = `<p class="muted" style="padding:14px">Pas de coordonn\xE9es GPS exploitables pour cette mont\xE9e.</p>`;
+        return;
+      }
+      const map = renderRouteMap(
+        container,
+        { lat: path.lat, lon: path.lon },
+        [{ start_idx: 0, end_idx: path.lat.length - 1 }]
+      );
+      if (map) activeSegmentMaps.push(map);
+    } catch (e) {
+      container.innerHTML = notice(e.message);
+    }
+  }
   async function progChart(m) {
     const out = document.getElementById("prog-chart");
     out.innerHTML = "";
@@ -3394,37 +3542,6 @@ Laisse vide pour revenir au nom automatique.`,
       }
     } catch (e) {
       out.innerHTML = notice(e.message);
-    }
-  }
-  async function climbProg() {
-    const chartHost = document.getElementById("climb-chart");
-    const table = document.getElementById("climb-table");
-    chartHost.innerHTML = "";
-    table.innerHTML = "";
-    try {
-      const d = await call("get_climb_progression");
-      if (!d.climbs || !d.climbs.length) {
-        chartHost.innerHTML = `<div class="empty"><div class="big">Aucune mont\xE9e</div>
-         <p>Importe une sortie comportant du d\xE9nivel\xE9.</p></div>`;
-        return;
-      }
-      renderHrVamChart(chartHost, d.climbs);
-      table.innerHTML = `<div class="card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr>
-        <th>Date</th><th>Sortie</th><th>Pente</th><th>Long.</th><th>D+</th>
-        <th>VAM</th><th>FC</th><th>D\xE9rive</th><th>Puiss.</th>
-      </tr></thead><tbody>` + d.climbs.slice().reverse().map((c) => `<tr>
-        <td class="date-cell">${frDate(c.ride_date)}</td>
-        <td class="fname">${esc(c.ride_filename)}</td>
-        <td class="num">${nf(c.avg_grade_pct, 1)} %</td>
-        <td class="num">${nf(c.distance_m / 1e3, 1)} km</td>
-        <td class="num">${nf(c.elevation_gain_m)} m</td>
-        <td class="num"><b>${nf(c.vam_mh)}</b></td>
-        <td class="num">${nf(c.avg_hr)}</td>
-        <td class="num">${c.hr_drift_bpm === null ? "\u2014" : (c.hr_drift_bpm > 0 ? "+" : "") + nf(c.hr_drift_bpm, 1)}</td>
-        <td class="num">${nf(c.est_power_w)} W</td>
-      </tr>`).join("") + `</tbody></table></div></div>`;
-    } catch (e) {
-      chartHost.innerHTML = notice(e.message);
     }
   }
   async function loadCompare() {

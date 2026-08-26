@@ -65,6 +65,12 @@ async function call(method, ...args) {
 
 let activeProfile = null;
 let activeMap = null;
+let activeSegmentMaps = []; // plusieurs montées répétées peuvent être dépliées en même temps
+
+function destroyAllSegmentMaps() {
+  activeSegmentMaps.forEach((m) => destroyRouteMap(m));
+  activeSegmentMaps = [];
+}
 
 function showTab(name) {
   document.querySelectorAll(".tab-btn")
@@ -76,6 +82,7 @@ function showTab(name) {
 
   if (name !== "detail" && activeProfile) { activeProfile.destroy(); activeProfile = null; }
   if (name !== "detail" && activeMap) { destroyRouteMap(activeMap); activeMap = null; }
+  if (name !== "progression") destroyAllSegmentMaps();
   if (name === "rides") loadRides();
   if (name === "progression") loadProgression();
   if (name === "compare") loadCompare();
@@ -177,6 +184,43 @@ async function loadRides() {
   }
 }
 
+document.getElementById("btn-recompute-all").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-recompute-all");
+  const out = document.getElementById("recompute-out");
+  if (!confirm("Recalculer toutes les sorties avec le moteur de calcul actuel ? Ça peut prendre un moment selon le nombre de sorties.")) return;
+
+  btn.disabled = true;
+  try {
+    const rides = await call("list_rides");
+    if (!rides.length) {
+      out.innerHTML = notice("Aucune sortie à recalculer.");
+      return;
+    }
+    let ok = 0, failed = 0;
+    const failures = [];
+    for (let i = 0; i < rides.length; i++) {
+      const r = rides[i];
+      out.innerHTML = spinner(`Recalcul ${i + 1}/${rides.length} — ${r.filename}`);
+      try {
+        await call("recompute_ride", r.id);
+        ok++;
+      } catch (e) {
+        failed++;
+        failures.push(`${r.filename} : ${e.message}`);
+      }
+    }
+    out.innerHTML = notice(
+      `${ok} sortie(s) recalculée(s)` + (failed ? `, ${failed} échec(s) :\n` + failures.join("\n") : "."),
+      failed === 0
+    );
+    loadRides();
+  } catch (e) {
+    out.innerHTML = notice(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 /* ------------------------------------------------------------ Détail sortie */
 
 let currentRide = null;
@@ -241,6 +285,7 @@ async function openRide(id) {
       html += `<div class="metrics">
         ${metric("Vitesse moy.", num(fs.avg_speed_kmh, "km/h", 1))}
         ${metric("FC moyenne", num(fs.avg_hr, "bpm"))}
+        ${metric("FC / km/h", num(fs.hr_per_kmh, "", 2))}
         ${metric("Durée", dur(fs.duration_s))}
         ${metric("Longueur", num(fs.distance_m / 1000, "km", 1))}
         ${metric("Intervient au km", num(fs.start_km, "km", 1))}
@@ -545,7 +590,6 @@ async function loadProgression() {
     }
   }
   progChart(sel.value);
-  climbProg();
   loadGoals();
   loadTrainingLoad();
   loadDashboard();
@@ -726,23 +770,28 @@ async function loadFlatSegments() {
     }
     if (segs.length >= 2) {
       const dates = segs.map((s) => new Date(s.ride_date).getTime());
-      const speeds = segs.map((s) => s.avg_speed_kmh);
-      renderProgressionChart(chart, dates, speeds, {
-        ylabel: "Vitesse (km/h)", title: "Vitesse sur le segment plat de référence",
+      const ratios = segs.map((s) => s.hr_per_kmh);
+      renderProgressionChart(chart, dates, ratios, {
+        ylabel: "FC / vitesse (bpm par km/h)", title: "Efficience sur le segment plat de référence",
       });
+      chart.innerHTML += `<p class="muted" style="margin-top:10px">
+        Plus bas = plus efficace (moins de battements de cœur pour une même vitesse).
+        Reste sensible à l'aspiration en groupe — rouler dans la roue de quelqu'un de
+        plus fort peut faire baisser ce ratio sans gain de forme réel.</p>`;
     } else {
       chart.innerHTML = `<p class="muted">Une seule sortie avec segment plat pour l'instant —
         le graphique apparaîtra à partir de la deuxième.</p>`;
     }
 
     table.innerHTML = `<div class="card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr>
-        <th>Date</th><th>Sortie</th><th>Vitesse</th><th>FC</th><th>Durée</th><th>Longueur</th>
+        <th>Date</th><th>Sortie</th><th>Vitesse</th><th>FC</th><th>FC/km/h</th><th>Durée</th><th>Longueur</th>
         <th>Km sortie</th><th>D+ avant</th>
       </tr></thead><tbody>` + segs.slice().reverse().map((s) => `<tr>
         <td class="date-cell">${frDate(s.ride_date)}</td>
         <td class="fname">${esc(s.ride_filename)}</td>
-        <td class="num"><b>${nf(s.avg_speed_kmh, 1)}</b> km/h</td>
+        <td class="num">${nf(s.avg_speed_kmh, 1)} km/h</td>
         <td class="num">${nf(s.avg_hr)} bpm</td>
+        <td class="num"><b>${nf(s.hr_per_kmh, 2)}</b></td>
         <td class="num">${dur(s.duration_s).replace(/<\/?small>/g, "")}${s.truncated ? " ⚠" : ""}</td>
         <td class="num">${nf(s.distance_m / 1000, 1)} km</td>
         <td class="num">${nf(s.start_km, 1)} km</td>
@@ -756,6 +805,7 @@ async function loadFlatSegments() {
 
 async function loadClimbSegments() {
   const out = document.getElementById("segments-out");
+  destroyAllSegmentMaps(); // la carte va être régénérée : on évite de garder d'anciennes instances Leaflet
   out.innerHTML = spinner();
   try {
     const data = await call("get_climb_segments");
@@ -772,15 +822,25 @@ async function loadClimbSegments() {
           <span class="climb-no">${s.n_occurrences}×</span>
           <span class="climb-title">
             <span class="t">${esc(s.name || s.label)}</span>
-            <span class="s">${s.name ? `${esc(s.label)} · ` : ""}${frDate(s.first_date)} → ${frDate(s.last_date)}
-              ${s.vam_trend_pct !== null ? ` · VAM ${signed(s.vam_trend_pct, " %", 1).replace(/<\/?small>/g, "")}` : ""}
-              <button class="btn-rename" data-rename="${i}" title="Renommer" aria-label="Renommer cette montée">✎ renommer</button></span>
+            <span class="s">${s.name ? `${esc(s.label)} · ` : ""}${frDate(s.first_date)} → ${frDate(s.last_date)}</span>
           </span>
           <span class="climb-vam">${nf(s.best_vam_mh)}<small> m/h max</small></span>
           <span class="chev">▸</span>
         </div>
         <div class="climb-body" id="segment-body-${i}">
-          <div class="table-scroll"><table><thead><tr>
+          <div class="metrics">
+            ${metric("Occurrences", s.n_occurrences + "×")}
+            ${metric("Pente moy.", num(s.avg_grade_pct, " %", 1))}
+            ${metric("Longueur", num(s.avg_distance_m / 1000, " km", 1))}
+            ${metric("D+ moyen", num(s.avg_elevation_m, " m"))}
+            ${metric("Meilleure VAM", num(s.best_vam_mh, " m/h"))}
+            ${metric("Tendance VAM", s.vam_trend_pct === null ? "—" : signed(s.vam_trend_pct, " %", 1))}
+          </div>
+          <div class="btn-row" style="margin:14px 0">
+            <button class="btn-ghost" data-rename="${i}">✎ Renommer cette montée</button>
+          </div>
+          <div id="segment-map-${i}" class="card" style="padding:0; overflow:hidden"></div>
+          <div class="table-scroll" style="margin-top:14px"><table><thead><tr>
             <th>Date</th><th>Sortie</th><th>VAM</th><th>FC</th><th>Dérive</th><th>Puiss.</th>
           </tr></thead><tbody>${s.occurrences.slice().reverse().map((o) => `<tr>
             <td class="date-cell">${frDate(o.ride_date)}</td>
@@ -796,7 +856,11 @@ async function loadClimbSegments() {
     out.querySelectorAll("[data-seg]").forEach((h) => {
       h.setAttribute("role", "button");
       h.setAttribute("tabindex", "0");
-      const toggle = () => document.getElementById(`segment-${h.dataset.seg}`).classList.toggle("open");
+      const toggle = () => {
+        const opening = !document.getElementById(`segment-${h.dataset.seg}`).classList.contains("open");
+        document.getElementById(`segment-${h.dataset.seg}`).classList.toggle("open");
+        if (opening) loadSegmentMap(parseInt(h.dataset.seg, 10));
+      };
       h.addEventListener("click", toggle);
       h.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
@@ -837,6 +901,33 @@ async function loadClimbSegments() {
   }
 }
 
+/** Charge la carte de localisation d'une montée répétée, à la demande
+ * (première ouverture seulement) — utilise l'occurrence la plus récente. */
+async function loadSegmentMap(segIndex) {
+  const seg = currentSegments[segIndex];
+  const container = document.getElementById(`segment-map-${segIndex}`);
+  if (!container || container.dataset.built) return;
+  container.dataset.built = "1";
+  container.innerHTML = spinner("Chargement de la carte…");
+  const occ = seg.occurrences[seg.occurrences.length - 1]; // la plus récente
+  try {
+    const path = await call("get_climb_path", occ.ride_id, occ.start_idx, occ.end_idx);
+    const validCount = path.lat.filter((v) => v !== null).length;
+    if (validCount < 2) {
+      container.innerHTML = `<p class="muted" style="padding:14px">Pas de coordonnées GPS exploitables pour cette montée.</p>`;
+      return;
+    }
+    const map = renderRouteMap(
+      container,
+      { lat: path.lat, lon: path.lon },
+      [{ start_idx: 0, end_idx: path.lat.length - 1 }]
+    );
+    if (map) activeSegmentMaps.push(map);
+  } catch (e) {
+    container.innerHTML = notice(e.message);
+  }
+}
+
 async function progChart(m) {
   const out = document.getElementById("prog-chart");
   out.innerHTML = "";
@@ -862,38 +953,6 @@ async function progChart(m) {
     }
   } catch (e) {
     out.innerHTML = notice(e.message);
-  }
-}
-
-async function climbProg() {
-  const chartHost = document.getElementById("climb-chart");
-  const table = document.getElementById("climb-table");
-  chartHost.innerHTML = "";
-  table.innerHTML = "";
-  try {
-    const d = await call("get_climb_progression");
-    if (!d.climbs || !d.climbs.length) {
-      chartHost.innerHTML = `<div class="empty"><div class="big">Aucune montée</div>
-         <p>Importe une sortie comportant du dénivelé.</p></div>`;
-      return;
-    }
-    renderHrVamChart(chartHost, d.climbs);
-    table.innerHTML = `<div class="card" style="margin-top:14px"><div class="table-scroll"><table><thead><tr>
-        <th>Date</th><th>Sortie</th><th>Pente</th><th>Long.</th><th>D+</th>
-        <th>VAM</th><th>FC</th><th>Dérive</th><th>Puiss.</th>
-      </tr></thead><tbody>` + d.climbs.slice().reverse().map((c) => `<tr>
-        <td class="date-cell">${frDate(c.ride_date)}</td>
-        <td class="fname">${esc(c.ride_filename)}</td>
-        <td class="num">${nf(c.avg_grade_pct, 1)} %</td>
-        <td class="num">${nf(c.distance_m / 1000, 1)} km</td>
-        <td class="num">${nf(c.elevation_gain_m)} m</td>
-        <td class="num"><b>${nf(c.vam_mh)}</b></td>
-        <td class="num">${nf(c.avg_hr)}</td>
-        <td class="num">${c.hr_drift_bpm === null ? "—" : (c.hr_drift_bpm > 0 ? "+" : "") + nf(c.hr_drift_bpm, 1)}</td>
-        <td class="num">${nf(c.est_power_w)} W</td>
-      </tr>`).join("") + `</tbody></table></div></div>`;
-  } catch (e) {
-    chartHost.innerHTML = notice(e.message);
   }
 }
 
