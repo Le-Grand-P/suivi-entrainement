@@ -459,12 +459,12 @@
         continue;
       }
       const vActual = v / 3.6;
-      const vTheo = vActual / cfg.SPEED_CORRECTION_FACTOR;
       const theta = Math.atan(g / 100);
       const fGravity = mass * cfg.G * Math.sin(theta);
       const fRoll = mass * cfg.G * cfg.CRR * Math.cos(theta);
-      const fAero = 0.5 * cfg.AIR_DENSITY * cfg.CDA * vTheo ** 2;
-      let power = (fGravity + fRoll + fAero) * vTheo / cfg.DRIVETRAIN_EFFICIENCY;
+      const fAero = 0.5 * cfg.AIR_DENSITY * cfg.CDA * vActual ** 2;
+      let power = (fGravity + fRoll + fAero) * vActual / cfg.DRIVETRAIN_EFFICIENCY;
+      power = power / cfg.SPEED_CORRECTION_FACTOR;
       if (!Number.isFinite(power) || power < 0) power = Number.isFinite(power) ? 0 : NaN;
       out[i] = power;
     }
@@ -939,7 +939,7 @@
     CLIMB_MIN_GRADE_PCT: 3,
     CLIMB_MIN_DISTANCE_M: 400,
     CLIMB_MIN_ELEVATION_M: 25,
-    CLIMB_MERGE_GAP_M: 150,
+    CLIMB_MERGE_GAP_M: 400,
     ALTITUDE_SMOOTHING_WINDOW: 13,
     GRADE_WINDOW_M: 50,
     ELEVATION_THRESHOLD_M: 1.5,

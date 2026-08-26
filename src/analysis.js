@@ -19,12 +19,22 @@ export function estimatePowerArray(speedKmh, gradePct, cfg, massKg) {
     const g = Number.isFinite(gradePct[i]) ? gradePct[i] : 0;
     if (!Number.isFinite(v) || v <= 0) { out[i] = NaN; continue; }
     const vActual = v / 3.6;
-    const vTheo = vActual / cfg.SPEED_CORRECTION_FACTOR;
     const theta = Math.atan(g / 100);
     const fGravity = mass * cfg.G * Math.sin(theta);
     const fRoll = mass * cfg.G * cfg.CRR * Math.cos(theta);
-    const fAero = 0.5 * cfg.AIR_DENSITY * cfg.CDA * vTheo ** 2;
-    let power = ((fGravity + fRoll + fAero) * vTheo) / cfg.DRIVETRAIN_EFFICIENCY;
+    // La traînée aéro dépend du CUBE de la vitesse (force * vitesse) : gonfler
+    // la vitesse AVANT ce calcul (comme le faisait l'ancienne version) amplifie
+    // le facteur de correction en cube au lieu de le laisser linéaire — un
+    // correctif de ~19% calibré en montée lente (aéro négligeable) se
+    // retrouvait à ~88% d'inflation sur le terme aéro, pire à haute vitesse
+    // (jusqu'à +205% en descente rapide, cas concret constaté et corrigé).
+    // Le facteur de correction est donc appliqué ici à la PUISSANCE finale,
+    // uniformément quelle que soit la vitesse — cohérent avec l'idée d'un
+    // ~19% de pertes réelles non modélisées (drivetrain, pacing, mesure),
+    // pas spécifiquement aérodynamiques.
+    const fAero = 0.5 * cfg.AIR_DENSITY * cfg.CDA * vActual ** 2;
+    let power = ((fGravity + fRoll + fAero) * vActual) / cfg.DRIVETRAIN_EFFICIENCY;
+    power = power / cfg.SPEED_CORRECTION_FACTOR;
     if (!Number.isFinite(power) || power < 0) power = Number.isFinite(power) ? 0 : NaN;
     out[i] = power;
   }
